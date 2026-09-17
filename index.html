@@ -58,6 +58,8 @@
 
   let activeUnsubscribe = null;
 
+  const getCleanDocId = (id) => String(id || '').trim().toLowerCase().replace(/[^a-zA-Z0-9_-]/g, "_");
+
   // Expose full Firebase NoSQL & Auth Interface to global scope
   window.Firebase = {
     app,
@@ -73,23 +75,18 @@
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         const user = userCredential.user;
         
-        // Update user display name in Firebase Auth
         await updateProfile(user, { displayName: name });
-        
-        // Send email verification link to user's inbox
         await sendEmailVerification(user);
 
-        // Record user in Firestore DB with unverified status
-        const cleanId = email.replace(/[^a-zA-Z0-9_-]/g, "_");
+        const cleanId = getCleanDocId(email);
         await setDoc(doc(db, "users", cleanId), {
           uid: user.uid,
-          email: email,
+          email: email.trim().toLowerCase(),
           displayName: name,
           emailVerified: false,
           createdAt: new Date().toISOString()
         }, { merge: true });
 
-        // Sign out until verified
         await signOut(auth);
 
         return { success: true, user };
@@ -105,7 +102,6 @@
         const userCredential = await signInWithEmailAndPassword(auth, email, password);
         const user = userCredential.user;
 
-        // Force-reload user token to check live verification status from Firebase
         await user.reload();
 
         if (!user.emailVerified) {
@@ -118,8 +114,7 @@
           };
         }
 
-        // Email verified! Update Firestore status
-        const cleanId = email.replace(/[^a-zA-Z0-9_-]/g, "_");
+        const cleanId = getCleanDocId(email);
         await setDoc(doc(db, "users", cleanId), {
           uid: user.uid,
           emailVerified: true,
@@ -153,16 +148,16 @@
       }
     },
 
-    // Save/Sync complete user document state in NoSQL Firestore (Collection: 'users', Document: userId)
+    // Save/Sync complete user document state in NoSQL Firestore
     syncUserDataToCloud: async (userId, data) => {
       if (!userId || !db) return;
       try {
-        const cleanId = userId.replace(/[^a-zA-Z0-9_-]/g, "_");
+        const cleanId = getCleanDocId(userId);
         await setDoc(doc(db, "users", cleanId), {
           updatedAt: new Date().toISOString(),
           data: JSON.parse(JSON.stringify(data))
         }, { merge: true });
-        console.log("⚡ [NoSQL Firestore] Synced user state to project lifeleader-c60e8 -> collection('users').doc('" + cleanId + "')");
+        console.log("⚡ [NoSQL Firestore Multi-Device] Synced user state to collection('users').doc('" + cleanId + "')");
       } catch (err) {
         console.warn("❌ [NoSQL Firestore] Sync error:", err);
       }
@@ -172,10 +167,10 @@
     fetchUserDataFromCloud: async (userId) => {
       if (!userId || !db) return null;
       try {
-        const cleanId = userId.replace(/[^a-zA-Z0-9_-]/g, "_");
+        const cleanId = getCleanDocId(userId);
         const snap = await getDoc(doc(db, "users", cleanId));
         if (snap.exists()) {
-          console.log("⚡ [NoSQL Firestore] Fetched document for user:", cleanId);
+          console.log("⚡ [NoSQL Firestore Multi-Device] Fetched document for user:", cleanId);
           return snap.data().data;
         }
       } catch (err) {
@@ -184,10 +179,10 @@
       return null;
     },
 
-    // Real-time listener for NoSQL document updates (Live sync across tabs/devices)
+    // Real-time listener for NoSQL document updates across devices
     subscribeToCloudData: (userId, onUpdateCallback) => {
       if (!userId || !db) return null;
-      const cleanId = userId.replace(/[^a-zA-Z0-9_-]/g, "_");
+      const cleanId = getCleanDocId(userId);
       if (activeUnsubscribe) activeUnsubscribe();
 
       try {

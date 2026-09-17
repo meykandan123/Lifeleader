@@ -3949,43 +3949,54 @@ window.onFirebaseUserAuthenticated = function(user) {
   }
 };
 
-function enterApp(email, name) {
-  currentUser = email;
-  if (!usersDB[email]) {
-    usersDB[email] = { name: name || email.split("@")[0], data: blankState() };
-  }
-  state = usersDB[email].data;
-  if (!state.passwords) state.passwords = [];
-  
-  saveSessionData();
+async function enterApp(email, name) {
+  const normEmail = String(email || '').trim().toLowerCase();
+  currentUser = normEmail;
 
-  // Fetch and sync user data from NoSQL Cloud Firestore for verified user
+  if (!usersDB[normEmail]) {
+    usersDB[normEmail] = { name: name || normEmail.split("@")[0], data: blankState() };
+  }
+
+  // 1. Await fetching existing cloud data BEFORE rendering or saving state
   if (window.Firebase && typeof window.Firebase.fetchUserDataFromCloud === "function") {
-    window.Firebase.fetchUserDataFromCloud(email).then(cloudData => {
-      if (cloudData && typeof cloudData === "object") {
-        state = { ...state, ...cloudData };
-        usersDB[email].data = state;
-        try { localStorage.setItem("lifeledger_usersDB", JSON.stringify(usersDB)); } catch(e){}
-        if (typeof renderMain === "function") renderMain();
+    try {
+      const cloudData = await window.Firebase.fetchUserDataFromCloud(normEmail);
+      if (cloudData && typeof cloudData === "object" && Object.keys(cloudData).length > 0) {
+        usersDB[normEmail].data = { ...blankState(), ...cloudData };
+        console.log("⚡ [Multi-Device Sync] Successfully restored cloud data from Firestore for:", normEmail);
       }
-    });
+    } catch (e) {
+      console.warn("Cloud fetch warning:", e);
+    }
   }
 
-  // Set up real-time live NoSQL listener
+  state = usersDB[normEmail].data;
+  if (!state.passwords) state.passwords = [];
+
+  // 2. Persist merged session locally
+  try {
+    localStorage.setItem("lifeledger_usersDB", JSON.stringify(usersDB));
+    localStorage.setItem("lifeledger_currentUser", normEmail);
+  } catch (e) {}
+
+  // 3. Attach real-time subscription for live multi-device streaming
   if (window.Firebase && typeof window.Firebase.subscribeToCloudData === "function") {
-    window.Firebase.subscribeToCloudData(email, cloudData => {
-      if (cloudData && typeof cloudData === "object") {
-        state = { ...state, ...cloudData };
-        usersDB[email].data = state;
+    window.Firebase.subscribeToCloudData(normEmail, cloudData => {
+      if (cloudData && typeof cloudData === "object" && Object.keys(cloudData).length > 0) {
+        state = { ...blankState(), ...cloudData };
+        usersDB[normEmail].data = state;
         try { localStorage.setItem("lifeledger_usersDB", JSON.stringify(usersDB)); } catch(e){}
-        if (typeof renderMain === "function") renderMain();
+        if (typeof renderMain === "function" && currentUser === normEmail) {
+          renderMain();
+        }
+        if (typeof checkAlerts === "function") checkAlerts();
       }
     });
   }
 
-  const displayName = usersDB[email].name || "User";
+  const displayName = usersDB[normEmail].name || "User";
   if (document.getElementById("profileName")) document.getElementById("profileName").textContent = displayName;
-  if (document.getElementById("profileEmail")) document.getElementById("profileEmail").textContent = email;
+  if (document.getElementById("profileEmail")) document.getElementById("profileEmail").textContent = normEmail;
   if (document.getElementById("profileAvatar")) document.getElementById("profileAvatar").textContent = displayName.split(" ").map(n => n[0]).join("").toUpperCase() || "U";
   
   authScreen.style.display = "none";
