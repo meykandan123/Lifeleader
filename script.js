@@ -7,6 +7,11 @@
 // Clean blank state for user session — no pre-filled sample data!
 function blankState() {
   return {
+    profile: {
+      name: "",
+      phone: "",
+      bio: ""
+    },
     income: [],
     expenses: [],
     budget: {
@@ -489,15 +494,16 @@ function saveSessionData() {
     normalizeUserBills(currentUser);
     normalizeUserSubscriptions(currentUser);
     syncAllBillsAndSubscriptionsToFinance();
-    usersDB[currentUser].data = state;
-    try {
-      localStorage.setItem("lifeledger_usersDB", JSON.stringify(usersDB));
-      localStorage.setItem("lifeledger_currentUser", currentUser);
-    } catch (e) {
-      console.warn("LocalStorage write error:", e);
-    }
 
-    // Real-time Cloud Sync with Firebase Firestore
+    // Ensure state.profile is updated and in sync with usersDB[currentUser]
+    if (!state.profile) state.profile = {};
+    if (usersDB[currentUser].name) state.profile.name = usersDB[currentUser].name;
+    if (usersDB[currentUser].phone) state.profile.phone = usersDB[currentUser].phone;
+    if (usersDB[currentUser].bio) state.profile.bio = usersDB[currentUser].bio;
+
+    usersDB[currentUser].data = state;
+
+    // Real-time Cloud Sync with Firebase Firestore (Single Source of Truth)
     if (window.Firebase && typeof window.Firebase.syncUserDataToCloud === "function") {
       window.Firebase.syncUserDataToCloud(currentUser, state);
     }
@@ -506,75 +512,56 @@ function saveSessionData() {
 
 function loadSessionData() {
   try {
-    const savedDB = localStorage.getItem("lifeledger_usersDB");
-    if (savedDB) usersDB = JSON.parse(savedDB);
-    const savedUser = localStorage.getItem("lifeledger_currentUser");
-    if (savedUser && usersDB[savedUser]) {
-      currentUser = savedUser;
-      state = usersDB[savedUser].data;
-      if (!state.passwords) state.passwords = [];
-      if (!state.documents) state.documents = [];
-      if (!state.appointments) state.appointments = [];
-      if (!state.bills) state.bills = [];
-      if (!state.subscriptions) state.subscriptions = [];
-      if (!state.expenses) state.expenses = [];
-      if (!state.income) state.income = [];
-      if (!state.healthRecords) state.healthRecords = [];
-      if (!state.waterIntake) state.waterIntake = [];
-      if (!state.sleepRecords) state.sleepRecords = [];
-      if (!state.workouts) state.workouts = [];
-      if (!state.medications) state.medications = [];
-      if (!state.habits) state.habits = [];
-      if (!state.habitCompletions) state.habitCompletions = [];
-      if (!state.doctorVisits) state.doctorVisits = [];
-      if (!state.notes) state.notes = [];
-      if (!state.contacts) state.contacts = [];
-      if (!state.reminders) state.reminders = [];
-      if (!state.vehicles) state.vehicles = [];
-      if (!state.warranties) state.warranties = [];
-      if (!state.importantIds) state.importantIds = [];
-      normalizeUserDocuments(currentUser);
-      normalizeUserAppointments(currentUser);
-      normalizeUserBills(currentUser);
-      normalizeUserSubscriptions(currentUser);
-      syncAllBillsAndSubscriptionsToFinance();
+    const activeUser = currentUser || (window.Firebase && window.Firebase.auth && window.Firebase.auth.currentUser ? window.Firebase.auth.currentUser.email : null);
+    if (activeUser) {
+      currentUser = String(activeUser).trim().toLowerCase();
+      if (!usersDB[currentUser]) {
+        usersDB[currentUser] = { name: currentUser.split("@")[0], data: blankState() };
+      }
+      state = usersDB[currentUser].data || blankState();
+
+      const applyCloudSync = (cloudData) => {
+        if (cloudData && typeof cloudData === 'object' && Object.keys(cloudData).length > 0) {
+          state = { ...blankState(), ...state, ...cloudData };
+          if (state.profile) {
+            if (state.profile.name) usersDB[currentUser].name = state.profile.name;
+            if (state.profile.phone) usersDB[currentUser].phone = state.profile.phone;
+            if (state.profile.bio) usersDB[currentUser].bio = state.profile.bio;
+          }
+          if (usersDB[currentUser]) {
+            usersDB[currentUser].data = state;
+          }
+          const displayName = (usersDB[currentUser] && usersDB[currentUser].name) || (state.profile && state.profile.name) || currentUser.split("@")[0];
+          if (document.getElementById("profileName")) document.getElementById("profileName").textContent = displayName;
+          if (document.getElementById("profileAvatar")) document.getElementById("profileAvatar").textContent = displayName.split(" ").map(n => n[0]).join("").toUpperCase() || "U";
+          
+          if (document.getElementById("userProfileModal") && document.getElementById("userProfileModal").style.display !== "none") {
+            openUserProfileModal();
+          }
+          if (typeof renderMain === 'function' && currentUser) {
+            renderMain();
+          }
+        }
+      };
 
       // Async fetch cloud state from Firebase Firestore
       if (window.Firebase && typeof window.Firebase.fetchUserDataFromCloud === "function") {
         window.Firebase.fetchUserDataFromCloud(currentUser).then(cloudData => {
-          if (cloudData && typeof cloudData === 'object') {
-            state = { ...state, ...cloudData };
-            if (usersDB[currentUser]) {
-              usersDB[currentUser].data = state;
-              localStorage.setItem("lifeledger_usersDB", JSON.stringify(usersDB));
-            }
-            if (typeof renderMain === 'function' && currentUser) {
-              renderMain();
-            }
-          }
+          applyCloudSync(cloudData);
         });
       }
 
       // Real-time live NoSQL Firestore subscription listener across browser tabs / devices
       if (window.Firebase && typeof window.Firebase.subscribeToCloudData === "function") {
         window.Firebase.subscribeToCloudData(currentUser, (cloudData) => {
-          if (cloudData && typeof cloudData === 'object') {
-            state = { ...state, ...cloudData };
-            if (usersDB[currentUser]) {
-              usersDB[currentUser].data = state;
-              try { localStorage.setItem("lifeledger_usersDB", JSON.stringify(usersDB)); } catch(e){}
-            }
-            if (typeof renderMain === 'function' && currentUser) {
-              renderMain();
-            }
-          }
+          applyCloudSync(cloudData);
         });
       }
 
-      return savedUser;
+      return currentUser;
     }
   } catch (e) {
-    console.warn("LocalStorage read error:", e);
+    console.warn("Firebase session load error:", e);
   }
   return null;
 }
@@ -3514,8 +3501,14 @@ function attachHandlers() {
       usersDB[currentUser].phone = newPhone;
       usersDB[currentUser].bio = newBio;
 
+      if (!state.profile) state.profile = {};
+      state.profile.name = newName;
+      state.profile.phone = newPhone;
+      state.profile.bio = newBio;
+
       const initial = newName.split(" ").map(n => n[0]).join("").toUpperCase() || "U";
       if ($("profileAvatar")) $("profileAvatar").textContent = initial;
+      if ($("profileName")) $("profileName").textContent = newName;
 
       saveSessionData();
       closeUserProfileModal();
@@ -3963,6 +3956,11 @@ async function enterApp(email, name) {
       const cloudData = await window.Firebase.fetchUserDataFromCloud(normEmail);
       if (cloudData && typeof cloudData === "object" && Object.keys(cloudData).length > 0) {
         usersDB[normEmail].data = { ...blankState(), ...cloudData };
+        if (cloudData.profile) {
+          if (cloudData.profile.name) usersDB[normEmail].name = cloudData.profile.name;
+          if (cloudData.profile.phone) usersDB[normEmail].phone = cloudData.profile.phone;
+          if (cloudData.profile.bio) usersDB[normEmail].bio = cloudData.profile.bio;
+        }
         console.log("⚡ [Multi-Device Sync] Successfully restored cloud data from Firestore for:", normEmail);
       }
     } catch (e) {
@@ -3970,22 +3968,44 @@ async function enterApp(email, name) {
     }
   }
 
-  state = usersDB[normEmail].data;
+  state = usersDB[normEmail].data || blankState();
+  if (!state.profile) {
+    state.profile = {
+      name: usersDB[normEmail].name || name || normEmail.split("@")[0],
+      phone: usersDB[normEmail].phone || "",
+      bio: usersDB[normEmail].bio || ""
+    };
+  }
+  if (state.profile.name) usersDB[normEmail].name = state.profile.name;
+  if (state.profile.phone) usersDB[normEmail].phone = state.profile.phone;
+  if (state.profile.bio) usersDB[normEmail].bio = state.profile.bio;
+
   if (!state.passwords) state.passwords = [];
 
-  // 2. Persist merged session locally
-  try {
-    localStorage.setItem("lifeledger_usersDB", JSON.stringify(usersDB));
-    localStorage.setItem("lifeledger_currentUser", normEmail);
-  } catch (e) {}
-
-  // 3. Attach real-time subscription for live multi-device streaming
+  // 2. Attach real-time subscription for live multi-device streaming from Firebase Firestore
   if (window.Firebase && typeof window.Firebase.subscribeToCloudData === "function") {
     window.Firebase.subscribeToCloudData(normEmail, cloudData => {
       if (cloudData && typeof cloudData === "object" && Object.keys(cloudData).length > 0) {
-        state = { ...blankState(), ...cloudData };
+        state = { ...blankState(), ...state, ...cloudData };
+        if (cloudData.profile) {
+          if (cloudData.profile.name) usersDB[normEmail].name = cloudData.profile.name;
+          if (cloudData.profile.phone) usersDB[normEmail].phone = cloudData.profile.phone;
+          if (cloudData.profile.bio) usersDB[normEmail].bio = cloudData.profile.bio;
+        } else if (state.profile) {
+          if (state.profile.name) usersDB[normEmail].name = state.profile.name;
+          if (state.profile.phone) usersDB[normEmail].phone = state.profile.phone;
+          if (state.profile.bio) usersDB[normEmail].bio = state.profile.bio;
+        }
         usersDB[normEmail].data = state;
-        try { localStorage.setItem("lifeledger_usersDB", JSON.stringify(usersDB)); } catch(e){}
+        
+        const displayName = usersDB[normEmail].name || (state.profile && state.profile.name) || normEmail.split("@")[0];
+        if (document.getElementById("profileName")) document.getElementById("profileName").textContent = displayName;
+        if (document.getElementById("profileEmail")) document.getElementById("profileEmail").textContent = normEmail;
+        if (document.getElementById("profileAvatar")) document.getElementById("profileAvatar").textContent = displayName.split(" ").map(n => n[0]).join("").toUpperCase() || "U";
+        
+        if (document.getElementById("userProfileModal") && document.getElementById("userProfileModal").style.display !== "none") {
+          openUserProfileModal();
+        }
         if (typeof renderMain === "function" && currentUser === normEmail) {
           renderMain();
         }
@@ -3994,7 +4014,7 @@ async function enterApp(email, name) {
     });
   }
 
-  const displayName = usersDB[normEmail].name || "User";
+  const displayName = usersDB[normEmail].name || (state.profile && state.profile.name) || "User";
   if (document.getElementById("profileName")) document.getElementById("profileName").textContent = displayName;
   if (document.getElementById("profileEmail")) document.getElementById("profileEmail").textContent = normEmail;
   if (document.getElementById("profileAvatar")) document.getElementById("profileAvatar").textContent = displayName.split(" ").map(n => n[0]).join("").toUpperCase() || "U";
@@ -4018,11 +4038,14 @@ function openUserProfileModal() {
 
   if (!modal) return;
 
-  const displayName = user.name || currentUser.split("@")[0];
+  const displayName = user.name || (state.profile && state.profile.name) || currentUser.split("@")[0];
+  const phone = user.phone || (state.profile && state.profile.phone) || "";
+  const bio = user.bio || (state.profile && state.profile.bio) || "";
+
   if (editName) editName.value = displayName;
   if (editEmail) editEmail.value = currentUser;
-  if (editPhone) editPhone.value = user.phone || "";
-  if (editBio) editBio.value = user.bio || "";
+  if (editPhone) editPhone.value = phone;
+  if (editBio) editBio.value = bio;
   if (modalAvatar) modalAvatar.textContent = displayName.split(" ").map(n => n[0]).join("").toUpperCase() || "U";
 
   modal.style.display = "flex";
@@ -5819,9 +5842,18 @@ function toggleNotifDrawer() {
   drawer.style.display = drawer.style.display === "none" ? "block" : "none";
 }
 
-function logoutUser() {
+async function logoutUser() {
+  if (window.Firebase && window.Firebase.auth) {
+    try {
+      const { signOut } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js");
+      await signOut(window.Firebase.auth);
+    } catch (e) {
+      console.warn("Firebase signOut warning:", e);
+    }
+  }
   currentUser = null;
-  localStorage.removeItem("lifeledger_currentUser");
+  usersDB = {};
+  state = blankState();
   const authScreen = document.getElementById("authScreen");
   const appShell = document.getElementById("appShell");
   if (appShell) appShell.style.display = "none";
@@ -5850,7 +5882,7 @@ function attachGlobalHeaderEvents() {
 // INITIAL STATE & LIVE DATE TIMER
 (function initApp() {
   const restoredUser = loadSessionData();
-  if (restoredUser) {
+  if (restoredUser && usersDB[restoredUser]) {
     enterApp(restoredUser, usersDB[restoredUser].name);
   } else {
     authScreen.style.display = "flex";
