@@ -1875,7 +1875,7 @@ function viewFinance() {
         <h2>Transactions</h2>
         <div class="sub">${mExpList.length + mIncList.length} entries for ${getMonthYearLabel(currentMonth)}</div>
       </div>
-      <div style="display:flex; gap:8px;">
+      <div class="finance-tx-header-actions">
         <button type="button" id="txCardAddIncomeBtn" onclick="openAddIncomeModal()" style="background:var(--green-soft, #ecfdf5); color:var(--green-dark, #059669); border:1px solid var(--green-border, #a7f3d0); padding:6px 13px; border-radius:8px; font-weight:700; cursor:pointer; font-size:12.5px; display:inline-flex; align-items:center; gap:5px;">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add Income
         </button>
@@ -1897,21 +1897,23 @@ function viewFinance() {
       </div>
     </div>
 
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th>DATE</th>
-          <th>DESCRIPTION</th>
-          <th>CATEGORY</th>
-          <th>TYPE</th>
-          <th style="text-align:right;">AMOUNT</th>
-          <th style="text-align:center;">ACTIONS</th>
-        </tr>
-      </thead>
-      <tbody id="txTableBody">
-        ${renderTxTableRows(mExpList, mIncList, currentMonth)}
-      </tbody>
-    </table>
+    <div class="table-responsive">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>DATE</th>
+            <th>DESCRIPTION</th>
+            <th>CATEGORY</th>
+            <th>TYPE</th>
+            <th style="text-align:right;">AMOUNT</th>
+            <th style="text-align:center;">ACTIONS</th>
+          </tr>
+        </thead>
+        <tbody id="txTableBody">
+          ${renderTxTableRows(mExpList, mIncList, currentMonth)}
+        </tbody>
+      </table>
+    </div>
   </div>`;
 }
 
@@ -2743,19 +2745,19 @@ function viewBills() {
     </div>
 
     <!-- Dynamic Month Selector Bar -->
-    <div style="display: flex; align-items: center; justify-content: space-between; background: #ffffff; padding: 10px 16px; border-radius: 14px; border: 1px solid var(--border-color); flex-wrap: wrap; gap: 12px; box-shadow: var(--shadow-sm);">
-      <div style="display: flex; align-items: center; gap: 8px;">
-        <button type="button" onclick="prevBillMonth()" title="Previous Month" style="background: #f1f5f9; border: 1px solid var(--border-color); padding: 7px 14px; border-radius: 8px; font-weight: 700; color: #475569; cursor: pointer; display: flex; align-items: center; gap: 4px; font-size: 12.5px;">&larr; Prev</button>
-        <div style="position: relative;">
+    <div class="bills-month-nav-bar">
+      <div class="month-stepper-wrap">
+        <button type="button" onclick="prevBillMonth()" title="Previous Month" class="month-nav-btn">&larr; Prev</button>
+        <div class="month-select-wrap">
           <select id="billMonthSelect" onchange="changeBillMonthFilter(this.value)" style="padding: 8px 32px 8px 14px; border-radius: 8px; font-weight: 800; border: 1.5px solid #6366f1; background: #ffffff; color: #4f46e5; font-size: 14px; cursor: pointer; outline: none;">
             ${availableMonths.map(m => `<option value="${m}" ${m === selectedBillMonthYear ? 'selected' : ''}>${getMonthYearLabel(m)} ${m === currentRealMonthKey ? ' (Current)' : ''}</option>`).join('')}
           </select>
         </div>
-        <button type="button" onclick="nextBillMonth()" title="Next Month" style="background: #f1f5f9; border: 1px solid var(--border-color); padding: 7px 14px; border-radius: 8px; font-weight: 700; color: #475569; cursor: pointer; display: flex; align-items: center; gap: 4px; font-size: 12.5px;">Next &rarr;</button>
+        <button type="button" onclick="nextBillMonth()" title="Next Month" class="month-nav-btn">Next &rarr;</button>
       </div>
 
-      <div style="display: flex; align-items: center; gap: 8px;">
-        <button type="button" onclick="goToCurrentBillMonth()" style="background: #e0e7ff; border: 1px solid #c7d2fe; color: #4338ca; padding: 7px 14px; border-radius: 8px; font-weight: 700; font-size: 12.5px; cursor: pointer;">📅 Current Month</button>
+      <div class="current-month-btn-wrap">
+        <button type="button" onclick="goToCurrentBillMonth()" class="current-month-btn">📅 Current Month</button>
       </div>
     </div>
   </div>
@@ -2823,7 +2825,7 @@ function viewBills() {
 
   <!-- Bills Cards Grid -->
   ${filteredBills.length > 0 ? `
-    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px;">
+    <div class="bills-cards-grid">
       ${filteredBills.map(b => {
         const isPaid = b.status === "Paid";
         const isOverdue = !isPaid && (b.due < todayIso);
@@ -5044,7 +5046,7 @@ function renderHealthRecordsSection() {
     <!-- Add Health Record Form -->
     <div style="margin-top: 20px; background: #f8fafc; padding: 18px; border-radius: 12px; border: 1px solid var(--border-color);">
       <div style="font-weight: 700; font-size: 13.5px; margin-bottom: 12px; color: #0f172a;">➕ Add New Health Record</div>
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+      <div class="responsive-form-grid">
         <input type="text" id="hrTitleInput" placeholder="Record Title (e.g. Blood Test Results)" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
         <select id="hrTypeSelect" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
           <option value="Prescription">Prescription</option>
@@ -5055,9 +5057,9 @@ function renderHealthRecordsSection() {
         </select>
         <input type="date" id="hrDateInput" value="${new Date().toISOString().split("T")[0]}" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
         <input type="text" id="hrDoctorInput" placeholder="Doctor / Hospital Name" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
-        <input type="text" id="hrNotesInput" placeholder="Notes (Optional)" style="grid-column: span 2; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
-        <input type="file" id="hrFileInput" style="grid-column: span 2; font-size: 12px;">
-        <button id="hrAddBtn" onclick="addHealthRecord()" style="grid-column: span 2; padding: 10px; background: var(--primary-brand); color: #fff; border: none; border-radius: 8px; font-weight: 700; cursor: pointer;">Save Health Record</button>
+        <input type="text" id="hrNotesInput" class="grid-col-full" placeholder="Notes (Optional)" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
+        <input type="file" id="hrFileInput" class="grid-col-full" style="font-size: 12px;">
+        <button id="hrAddBtn" class="grid-col-full" onclick="addHealthRecord()" style="padding: 10px; background: var(--primary-brand); color: #fff; border: none; border-radius: 8px; font-weight: 700; cursor: pointer;">Save Health Record</button>
       </div>
     </div>
   </div>`;
@@ -5201,7 +5203,7 @@ function renderFitnessAndHabitsSection() {
       <span class="pill-tag info">${(state.workouts || []).length} workouts logged</span>
     </div>
 
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 14px;">
+    <div class="workout-form-grid">
       <select id="workoutTypeSelect" style="padding: 8px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
         <option value="Walking">Walking</option>
         <option value="Running">Running</option>
@@ -5402,7 +5404,7 @@ function renderMedicationsSection() {
 
     <div style="margin-top: 20px; background: #f8fafc; padding: 18px; border-radius: 12px; border: 1px solid var(--border-color);">
       <div style="font-weight: 700; font-size: 13.5px; margin-bottom: 10px; color: #0f172a;">➕ Add Medication Reminder</div>
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+      <div class="responsive-form-grid">
         <input type="text" id="medNameInput" placeholder="Medication Name (e.g. Paracetamol)" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
         <input type="text" id="medDosageInput" placeholder="Dosage (e.g. 500mg)" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
         <select id="medFreqSelect" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
@@ -5412,8 +5414,8 @@ function renderMedicationsSection() {
           <option value="As Needed">As Needed</option>
         </select>
         <input type="text" id="medTimeInput" placeholder="Reminder Time (e.g. 9:00 AM)" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
-        <input type="text" id="medNotesInput" placeholder="Notes (Optional)" style="grid-column: span 2; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
-        <button class="action-btn pay-btn" onclick="addMedication()" style="grid-column: span 2; padding: 10px;">Save Reminder</button>
+        <input type="text" id="medNotesInput" class="grid-col-full" placeholder="Notes (Optional)" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
+        <button class="grid-col-full action-btn pay-btn" onclick="addMedication()" style="padding: 10px;">Save Reminder</button>
       </div>
     </div>
   </div>`;
@@ -5679,7 +5681,7 @@ function viewContacts() {
       </select>
     </div>
 
-    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; margin-top: 16px;">
+    <div class="contacts-cards-grid">
       ${contactsList.map(c => `
         <div style="background: #ffffff; border: 1px solid var(--border-color); border-radius: 12px; padding: 16px;">
           <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
@@ -5705,7 +5707,7 @@ function viewContacts() {
 
     <div style="margin-top: 24px; background: #f8fafc; padding: 18px; border-radius: 12px; border: 1px solid var(--border-color);">
       <div style="font-weight: 700; font-size: 13.5px; margin-bottom: 12px; color: #0f172a;">➕ Add New Contact</div>
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+      <div class="responsive-form-grid">
         <input type="text" id="contactNameInput" placeholder="Name *" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
         <input type="text" id="contactPhoneInput" placeholder="Phone Number" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
         <input type="email" id="contactEmailInput" placeholder="Email Address" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
@@ -5719,7 +5721,7 @@ function viewContacts() {
         </select>
         <input type="date" id="contactBirthdayInput" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
         <input type="date" id="contactLastContactedInput" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
-        <button class="action-btn pay-btn" onclick="saveContact()" style="grid-column: span 2; padding: 10px;">Save Contact</button>
+        <button class="grid-col-full action-btn pay-btn" onclick="saveContact()" style="padding: 10px;">Save Contact</button>
       </div>
     </div>
   </div>`;
@@ -5786,7 +5788,7 @@ function renderVehiclesSection() {
       </div>
     </div>
 
-    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; margin-top: 14px;">
+    <div class="vehicles-cards-grid">
       ${list.map(v => {
         const insStatus = !v.insuranceExpiry ? 'Safe' : v.insuranceExpiry < todayIso ? 'Expired' : (new Date(v.insuranceExpiry) - new Date(todayIso)) / 86400000 <= 30 ? 'Expiring Soon' : 'Safe';
         const pucStatus = !v.pucExpiry ? 'Safe' : v.pucExpiry < todayIso ? 'Expired' : (new Date(v.pucExpiry) - new Date(todayIso)) / 86400000 <= 15 ? 'Expiring Soon' : 'Safe';
@@ -5832,7 +5834,7 @@ function renderVehiclesSection() {
 
     <div style="margin-top: 24px; background: #f8fafc; padding: 18px; border-radius: 12px; border: 1px solid var(--border-color);">
       <div style="font-weight: 700; font-size: 13.5px; margin-bottom: 12px; color: #0f172a;">➕ Add New Vehicle</div>
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+      <div class="responsive-form-grid">
         <input type="text" id="vNameInput" placeholder="Vehicle Name (e.g. My Honda City)" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
         <input type="text" id="vNumberInput" placeholder="Registration Number (e.g. KA 01 AB 1234)" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
         <select id="vTypeSelect" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
@@ -5855,7 +5857,7 @@ function renderVehiclesSection() {
           <input type="date" id="vServiceInput" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
         </div>
         <input type="text" id="vNotesInput" placeholder="Notes (Optional)" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px; align-self: flex-end;">
-        <button class="action-btn pay-btn" onclick="saveVehicle()" style="grid-column: span 2; padding: 10px;">Save Vehicle</button>
+        <button class="grid-col-full action-btn pay-btn" onclick="saveVehicle()" style="padding: 10px;">Save Vehicle</button>
       </div>
     </div>
   </div>`;
@@ -5898,7 +5900,7 @@ function renderWarrantiesSection() {
       </div>
     </div>
 
-    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; margin-top: 14px;">
+    <div class="warranties-cards-grid">
       ${list.map(w => {
         const diffDays = w.expiryDate ? Math.ceil((new Date(w.expiryDate) - new Date(todayIso)) / 86400000) : -1;
         const isExpired = diffDays < 0;
@@ -5936,14 +5938,14 @@ function renderWarrantiesSection() {
 
     <div style="margin-top: 24px; background: #f8fafc; padding: 18px; border-radius: 12px; border: 1px solid var(--border-color);">
       <div style="font-weight: 700; font-size: 13.5px; margin-bottom: 12px; color: #0f172a;">➕ Add New Warranty</div>
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+      <div class="responsive-form-grid">
         <input type="text" id="wProductInput" placeholder="Product Name (e.g. MacBook Air)" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
         <input type="text" id="wBrandInput" placeholder="Brand / Manufacturer" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
         <input type="date" id="wPurchaseDateInput" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
         <input type="date" id="wExpiryDateInput" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
         <input type="number" id="wPriceInput" placeholder="Purchase Price (₹)" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
         <input type="text" id="wSellerInput" placeholder="Store / Seller" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
-        <button class="action-btn pay-btn" onclick="saveWarranty()" style="grid-column: span 2; padding: 10px;">Save Warranty</button>
+        <button class="grid-col-full action-btn pay-btn" onclick="saveWarranty()" style="padding: 10px;">Save Warranty</button>
       </div>
     </div>
   </div>`;
@@ -6043,7 +6045,7 @@ function renderImportantIdsSection() {
       </div>
     </div>
 
-    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; margin-top: 14px;">
+    <div class="ids-cards-grid">
       ${list.map(idItem => {
         const isShown = maskedIdsState[idItem.id] === true;
         const rawNum = idItem.documentNumber || idItem.idNumber || '';
@@ -6094,10 +6096,9 @@ function renderImportantIdsSection() {
         </div>` : ''}
     </div>
 
-    <!-- Add Vehicle Document Form -->
     <div style="margin-top: 24px; background: #f8fafc; padding: 18px; border-radius: 12px; border: 1px solid var(--border-color);">
       <div style="font-weight: 700; font-size: 13.5px; margin-bottom: 12px; color: #0f172a;">➕ Add Vehicle Document / ID Record</div>
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+      <div class="responsive-form-grid">
         <div style="display: flex; flex-direction: column;">
           <label style="font-size: 11px; font-weight: 700; color: #64748b; margin-bottom: 3px;">Document Type *</label>
           <select id="idTypeSelect" style="padding: 9px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px; background: #ffffff; color: var(--text-main); font-weight: 600; cursor: pointer;">
@@ -6129,7 +6130,7 @@ function renderImportantIdsSection() {
           <input type="date" id="idExpiryInput" style="padding: 9px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;">
         </div>
 
-        <div style="grid-column: span 2; display: flex; flex-direction: column;">
+        <div class="grid-col-full" style="display: flex; flex-direction: column;">
           <label style="font-size: 11px; font-weight: 700; color: #64748b; margin-bottom: 3px;">Choose Vehicle Document (PDF Only)</label>
           <input type="file" id="idFileInput" accept=".pdf,application/pdf" style="display: none;" onchange="handleIdPdfSelect(this)">
           <button type="button" onclick="document.getElementById('idFileInput').click()" style="background: #ffffff; border: 1px solid var(--border-color); padding: 9px 14px; border-radius: 8px; font-size: 12.5px; font-weight: 600; cursor: pointer; color: #334155; display: flex; align-items: center; gap: 6px; width: 100%;">
@@ -6137,7 +6138,7 @@ function renderImportantIdsSection() {
           </button>
         </div>
 
-        <button class="action-btn pay-btn" onclick="saveImportantId()" style="grid-column: span 2; padding: 10px; font-weight: 700; font-size: 13.5px; margin-top: 4px;">
+        <button class="grid-col-full action-btn pay-btn" onclick="saveImportantId()" style="padding: 10px; font-weight: 700; font-size: 13.5px; margin-top: 4px;">
           💾 Save ID Record
         </button>
       </div>
@@ -6390,6 +6391,12 @@ function toggleNotifDrawer() {
 }
 
 async function logoutUser() {
+  if (typeof closeUserProfileModal === "function") {
+    closeUserProfileModal();
+  }
+  if (typeof closeReportIssueModal === "function") {
+    closeReportIssueModal();
+  }
   if (window.Firebase && window.Firebase.auth) {
     try {
       const { signOut } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js");
@@ -6405,6 +6412,12 @@ async function logoutUser() {
   const appShell = document.getElementById("appShell");
   if (appShell) appShell.style.display = "none";
   if (authScreen) authScreen.style.display = "flex";
+
+  const loginPass = document.getElementById("loginPass");
+  if (loginPass) loginPass.value = "";
+  const signupPass = document.getElementById("signupPass");
+  if (signupPass) signupPass.value = "";
+
   showToast("Logged out successfully!");
 }
 
@@ -6423,6 +6436,11 @@ function attachGlobalHeaderEvents() {
   if (logoutBtn && !logoutBtn.dataset.bound) {
     logoutBtn.dataset.bound = "true";
     logoutBtn.addEventListener("click", logoutUser);
+  }
+  const modalLogoutBtn = document.getElementById("modalLogoutBtn");
+  if (modalLogoutBtn && !modalLogoutBtn.dataset.bound) {
+    modalLogoutBtn.dataset.bound = "true";
+    modalLogoutBtn.addEventListener("click", logoutUser);
   }
 }
 

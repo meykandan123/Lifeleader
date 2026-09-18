@@ -37,7 +37,12 @@
 }
 
 * { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; }
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+  max-width: 100vw;
+}
 html { scroll-behavior: smooth; }
 body {
   background-color: var(--bg-app);
@@ -47,6 +52,9 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+  max-width: 100vw;
+  width: 100%;
 }
 
 /* Custom Ultra-Smooth Scrollbar */
@@ -98,6 +106,9 @@ h1, h2, h3, h4 {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  max-width: 100vw;
+  width: 100%;
+  overflow-x: hidden;
 }
 
 /* ===== Masthead ===== */
@@ -123,11 +134,150 @@ h1, h2, h3, h4 {
   gap: 12px;
 }
 
+/* Responsive Form Grid Utility (In-Card Forms) */
+.responsive-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  width: 100%;
+  max-width: 100%;
+}
+.responsive-form-grid .grid-col-full {
+  grid-column: 1 / -1;
+}
+
 /* Table Responsive Scroll Wrapper */
 .table-responsive {
   width: 100%;
+  max-width: 100%;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+  display: block;
+}
+
+/* Bills Dynamic Month Navigation Bar */
+.bills-month-nav-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #ffffff;
+  padding: 10px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--border-color);
+  flex-wrap: wrap;
+  gap: 12px;
+  box-shadow: var(--shadow-sm);
+  width: 100%;
+  max-width: 100%;
+}
+
+.month-stepper-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.month-select-wrap {
+  position: relative;
+}
+
+.month-nav-btn {
+  background: #f1f5f9;
+  border: 1px solid var(--border-color);
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-weight: 700;
+  color: #475569;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.month-nav-btn:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.current-month-btn-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.current-month-btn {
+  background: #e0e7ff;
+  border: 1px solid #c7d2fe;
+  color: #4338ca;
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.current-month-btn:hover {
+  background: #c7d2fe;
+}
+
+/* Responsive Card Grids */
+.bills-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 18px;
+  width: 100%;
+}
+
+.vehicles-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 14px;
+  width: 100%;
+}
+
+.contacts-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+  width: 100%;
+}
+
+.warranties-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 14px;
+  width: 100%;
+}
+
+.ids-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 14px;
+  width: 100%;
+}
+
+.workout-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+  width: 100%;
+}
+
+.finance-tx-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
 .masthead-left {
@@ -2708,15 +2858,110 @@ footer {
   
   main#mainContent { padding: 14px 14px 36px; }
   
-  .modal-form-grid {
+  .modal-form-grid,
+  .responsive-form-grid {
     grid-template-columns: 1fr !important;
-    gap: 10px;
+    gap: 10px !important;
   }
   .modal-form-grid > [style*="grid-column: span 2"],
-  .modal-form-grid > [style*="grid-column:span 2"] {
-    grid-column: span 1 !important;
+  .modal-form-grid > [style*="grid-column:span 2"],
+  .responsive-form-grid > [style*="grid-column: span 2"],
+  .responsive-form-grid > [style*="grid-column:span 2"],
+  .responsive-form-grid .grid-col-full {
+    grid-column: 1 / -1 !important;
+  }
+  .responsive-form-grid > * {
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  /* Universal Fallback for any legacy inline 1fr 1fr grids */
+  [style*="grid-template-columns: 1fr 1fr"],
+  [style*="grid-template-columns:1fr 1fr"] {
+    grid-template-columns: 1fr !important;
+  }
+  [style*="grid-template-columns: 1fr 1fr"] > *,
+  [style*="grid-template-columns:1fr 1fr"] > * {
+    grid-column: 1 / -1 !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  /* Bills Dynamic Month Navigation Bar Mobile */
+  .bills-month-nav-bar {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+    padding: 10px 12px !important;
+  }
+  .month-stepper-wrap {
+    width: 100% !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+  }
+  .month-select-wrap {
+    flex: 1 !important;
+    min-width: 0 !important;
+  }
+  .month-select-wrap select,
+  #billMonthSelect {
+    width: 100% !important;
+    min-width: 0 !important;
+    font-size: 13px !important;
+    padding: 8px 10px !important;
+    text-overflow: ellipsis !important;
+    box-sizing: border-box !important;
+  }
+  .month-nav-btn {
+    padding: 7px 10px !important;
+    font-size: 12px !important;
+    flex-shrink: 0 !important;
+  }
+  .current-month-btn-wrap {
+    width: 100% !important;
+    display: flex !important;
+  }
+  .current-month-btn {
+    width: 100% !important;
+    justify-content: center !important;
+    text-align: center !important;
+    padding: 8px 12px !important;
+    box-sizing: border-box !important;
+  }
+
+  /* Card Grids collapse cleanly on mobile */
+  .bills-cards-grid,
+  .vehicles-cards-grid,
+  .contacts-cards-grid,
+  .warranties-cards-grid,
+  .ids-cards-grid,
+  .workout-form-grid {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+
+  /* Finance Header & Transaction Actions */
+  .finance-tx-header-actions {
+    width: 100% !important;
+    display: flex !important;
+    gap: 8px !important;
+    margin-top: 6px !important;
+  }
+  .finance-tx-header-actions button {
+    flex: 1 !important;
+    justify-content: center !important;
+    padding: 8px 10px !important;
   }
   
+  .table-responsive {
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    display: block !important;
+  }
+
   .doc-modal-container {
     width: 92vw !important;
     max-width: 92vw !important;
@@ -2810,12 +3055,16 @@ footer {
     white-space: nowrap;
   }
   
-  .modal-form-grid {
+  .modal-form-grid,
+  .responsive-form-grid {
     grid-template-columns: 1fr !important;
   }
   .modal-form-grid > [style*="grid-column: span 2"],
-  .modal-form-grid > [style*="grid-column:span 2"] {
-    grid-column: span 1 !important;
+  .modal-form-grid > [style*="grid-column:span 2"],
+  .responsive-form-grid > [style*="grid-column: span 2"],
+  .responsive-form-grid > [style*="grid-column:span 2"],
+  .responsive-form-grid .grid-col-full {
+    grid-column: 1 / -1 !important;
   }
   
   .doc-modal-container {

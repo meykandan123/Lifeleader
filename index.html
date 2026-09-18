@@ -366,14 +366,6 @@
             onclick="openUserProfileModal()">
             <div class="profile-avatar" id="profileAvatar">M</div>
           </div>
-          <button class="logout-btn" id="logoutBtn" onclick="logoutUser()">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-              <polyline points="16 17 21 12 16 7" />
-              <line x1="21" y1="12" x2="9" y2="12" />
-            </svg>
-            <span>Log out</span>
-          </button>
         </div>
       </div>
     </div>
@@ -485,7 +477,30 @@
           </button>
         </div>
 
-        <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 8px;">
+        <!-- Account Session / Sign Out Section -->
+        <div
+          style="background: #f8fafc; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 4px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div
+              style="width: 34px; height: 34px; border-radius: 10px; background: #fee2e2; color: #dc2626; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0;">
+              🚪</div>
+            <div>
+              <div style="font-weight: 700; font-size: 13px; color: #0f172a;">Account Session</div>
+              <div style="font-size: 11.5px; color: var(--text-muted);">Sign out from this device securely</div>
+            </div>
+          </div>
+          <button type="button" id="modalLogoutBtn" onclick="logoutUser()"
+            style="background: #ffffff; border: 1.5px solid #fca5a5; color: #dc2626; padding: 8px 16px; border-radius: 8px; font-weight: 700; font-size: 12.5px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 1px 4px rgba(220, 38, 38, 0.08); transition: all 0.2s ease;">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+            <span>Log out</span>
+          </button>
+        </div>
+
+        <div style="display: flex; gap: 10px; justify-content: flex-end; align-items: center; margin-top: 8px;">
           <button type="button" onclick="closeUserProfileModal()"
             style="padding: 10px 18px; border-radius: 8px; border: 1px solid var(--border-color); background: #f1f5f9; color: #475569; font-weight: 600; font-size: 13px; cursor: pointer;">Cancel</button>
           <button type="submit"
@@ -1028,195 +1043,196 @@
   </div>
 
   <!-- Edit Appointment Modal -->
-    <div id="editApptModal" class="doc-modal-overlay" style="display: none;">
-      <div class="doc-modal-container" style="max-width: 480px;">
-        <div class="doc-modal-header">
-          <div>
-            <h3>Edit Appointment Schedule</h3>
-            <div style="font-size: 12px; color: #64748b;">Update appointment details and date</div>
-          </div>
-          <button type="button" class="doc-modal-close" onclick="closeEditApptModal()">&times;</button>
+  <div id="editApptModal" class="doc-modal-overlay" style="display: none;">
+    <div class="doc-modal-container" style="max-width: 480px;">
+      <div class="doc-modal-header">
+        <div>
+          <h3>Edit Appointment Schedule</h3>
+          <div style="font-size: 12px; color: #64748b;">Update appointment details and date</div>
         </div>
-        <form id="editApptForm">
-          <div class="doc-modal-body modal-form-grid">
-            <input type="hidden" id="editApptId">
-            <div style="grid-column: span 2;">
-              <label
-                style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Appointment
-                Title</label>
-              <input type="text" id="editApptTitle" required
-                style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
+        <button type="button" class="doc-modal-close" onclick="closeEditApptModal()">&times;</button>
+      </div>
+      <form id="editApptForm">
+        <div class="doc-modal-body modal-form-grid">
+          <input type="hidden" id="editApptId">
+          <div style="grid-column: span 2;">
+            <label
+              style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Appointment
+              Title</label>
+            <input type="text" id="editApptTitle" required
+              style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
+          </div>
+          <div>
+            <label
+              style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Appointment
+              Date</label>
+            <input type="date" id="editApptDate" aria-label="Appointment Date" required
+              style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; background: #fff;">
+          </div>
+          <div>
+            <label
+              style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Time</label>
+            <input type="text" id="editApptTime" placeholder="e.g. 11:00 AM" required
+              style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
+          </div>
+          <div style="grid-column: span 2;">
+            <label
+              style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Category</label>
+            <select id="editApptCategory"
+              style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; background: #fff; font-weight: 600;">
+              <option value="Personal">Personal</option>
+              <option value="Business">Business</option>
+            </select>
+          </div>
+        </div>
+        <div class="doc-modal-footer">
+          <button type="submit" class="doc-modal-dl-btn" style="background: var(--primary-brand); color: #fff;">Save
+            Changes</button>
+          <button type="button" class="doc-modal-cancel-btn" onclick="closeEditApptModal()">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Edit Goal Modal -->
+  <div id="editGoalModal" class="doc-modal-overlay" style="display: none;">
+    <div class="doc-modal-content" style="max-width: 500px;">
+      <div class="doc-modal-header">
+        <div>
+          <h3>Edit Financial Goal</h3>
+          <div style="font-size: 12px; color: #64748b;">Update goal title, details, target amount, and dates</div>
+        </div>
+        <button type="button" class="doc-modal-close" onclick="closeEditGoalModal()">&times;</button>
+      </div>
+      <form id="editGoalForm">
+        <div class="doc-modal-body modal-form-grid">
+          <input type="hidden" id="editGoalId">
+          <div style="grid-column: span 2;">
+            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Goal
+              Title</label>
+            <input type="text" id="editGoalTitle" required placeholder="Goal Title (e.g. Buy New Laptop)"
+              style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
+          </div>
+          <div style="grid-column: span 2;">
+            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Goal
+              Details / Description</label>
+            <input type="text" id="editGoalDetails" placeholder="Save money for purchasing a new laptop for studies..."
+              style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
+          </div>
+          <div style="grid-column: span 2;">
+            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Target
+              Amount (₹)</label>
+            <input type="number" id="editGoalTarget" required min="1" step="any" placeholder="80000"
+              style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
+          </div>
+          <div>
+            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Start
+              Date</label>
+            <input type="date" id="editGoalStartDate" aria-label="Start Date" required
+              style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; background: #fff;">
+          </div>
+          <div>
+            <label
+              style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Deadline</label>
+            <input type="date" id="editGoalDeadlineDate" aria-label="Deadline" required
+              style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; background: #fff;">
+          </div>
+        </div>
+        <div class="doc-modal-footer">
+          <button type="submit" class="doc-modal-dl-btn" style="background: var(--primary-brand); color: #fff;">Save
+            Changes</button>
+          <button type="button" class="doc-modal-cancel-btn" onclick="closeEditGoalModal()">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Unified Transaction Modal (Date, Description, Category, Type, Amount) - Responsive PC/Tab/Mobile -->
+  <div id="txModal" class="doc-modal-overlay" style="display: none;" onclick="if(event.target === this) closeTxModal()">
+    <div class="tx-modal-container" role="dialog" aria-modal="true" aria-labelledby="txModalTitle">
+      <!-- Header with Icon Badge -->
+      <div class="tx-modal-header" id="txModalHeader">
+        <div class="tx-header-title-group">
+          <div id="txModalIcon" class="tx-modal-icon income-icon" aria-hidden="true">💰</div>
+          <div>
+            <h3 id="txModalTitle" class="tx-modal-title">Add New Income</h3>
+            <div id="txModalSub" class="tx-modal-sub">Record earnings, salary, or incoming funds</div>
+          </div>
+        </div>
+        <button type="button" class="tx-modal-close" onclick="closeTxModal()" aria-label="Close dialog">&times;</button>
+      </div>
+
+      <!-- Transaction Form -->
+      <form id="txModalForm" onsubmit="saveTxForm(event)" class="tx-form">
+        <input type="hidden" id="txId">
+
+        <div class="tx-form-grid">
+          <!-- 1. Transaction Type Toggle (Full Width) -->
+          <div class="tx-col-full">
+            <label class="tx-label">TRANSACTION TYPE</label>
+            <div class="tx-type-selector">
+              <label id="txTypeIncomeLabel" class="tx-type-pill active-income" for="txTypeIncome">
+                <input type="radio" name="txTypeRadio" id="txTypeIncome" value="income"
+                  onchange="onTxTypeChange('income')" checked>
+                <span class="tx-pill-badge" aria-hidden="true">📈</span>
+                <span>+ Income</span>
+              </label>
+              <label id="txTypeExpenseLabel" class="tx-type-pill" for="txTypeExpense">
+                <input type="radio" name="txTypeRadio" id="txTypeExpense" value="expense"
+                  onchange="onTxTypeChange('expense')">
+                <span class="tx-pill-badge" aria-hidden="true">📉</span>
+                <span>- Expense</span>
+              </label>
             </div>
-            <div>
-              <label
-                style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Appointment
-                Date</label>
-              <input type="date" id="editApptDate" aria-label="Appointment Date" required
-                style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; background: #fff;">
+          </div>
+
+          <!-- 2. Amount Field (Column 1 on Desktop/Tablet, stacked on Mobile) -->
+          <div class="tx-col-half">
+            <label class="tx-label" for="txAmount">AMOUNT (₹) <span class="tx-req">*</span></label>
+            <div class="tx-amount-wrapper">
+              <span class="tx-amount-prefix" aria-hidden="true">₹</span>
+              <input type="number" id="txAmount" class="tx-input tx-amount-input" required min="0.01" step="any"
+                placeholder="e.g. 50000" inputmode="decimal">
             </div>
-            <div>
-              <label
-                style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Time</label>
-              <input type="text" id="editApptTime" placeholder="e.g. 11:00 AM" required
-                style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
-            </div>
-            <div style="grid-column: span 2;">
-              <label
-                style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Category</label>
-              <select id="editApptCategory"
-                style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; background: #fff; font-weight: 600;">
-                <option value="Personal">Personal</option>
-                <option value="Business">Business</option>
+          </div>
+
+          <!-- 3. Date Field (Column 2 on Desktop/Tablet, stacked on Mobile) -->
+          <div class="tx-col-half">
+            <label class="tx-label" for="txDate">DATE <span class="tx-req">*</span></label>
+            <input type="date" id="txDate" class="tx-input tx-date-input" required>
+          </div>
+
+          <!-- 4. Category Field (Full Width) -->
+          <div class="tx-col-full">
+            <label class="tx-label" for="txCategory">CATEGORY <span class="tx-req">*</span></label>
+            <div class="tx-select-wrapper">
+              <select id="txCategory" class="tx-select" required>
+                <!-- Populated dynamically based on Type -->
               </select>
+              <span class="tx-select-chevron" aria-hidden="true">▼</span>
             </div>
           </div>
-          <div class="doc-modal-footer">
-            <button type="submit" class="doc-modal-dl-btn" style="background: var(--primary-brand); color: #fff;">Save
-              Changes</button>
-            <button type="button" class="doc-modal-cancel-btn" onclick="closeEditApptModal()">Cancel</button>
-          </div>
-        </form>
-      </div>
-    </div>
 
-    <!-- Edit Goal Modal -->
-    <div id="editGoalModal" class="doc-modal-overlay" style="display: none;">
-      <div class="doc-modal-content" style="max-width: 500px;">
-        <div class="doc-modal-header">
-          <div>
-            <h3>Edit Financial Goal</h3>
-            <div style="font-size: 12px; color: #64748b;">Update goal title, details, target amount, and dates</div>
+          <!-- 5. Description Field (Full Width) -->
+          <div class="tx-col-full">
+            <label class="tx-label" for="txDesc">DESCRIPTION <span class="tx-req">*</span></label>
+            <input type="text" id="txDesc" class="tx-input" required
+              placeholder="e.g. Monthly Salary, Freelance project, Groceries" autocomplete="off">
           </div>
-          <button type="button" class="doc-modal-close" onclick="closeEditGoalModal()">&times;</button>
-        </div>
-        <form id="editGoalForm">
-          <div class="doc-modal-body modal-form-grid">
-            <input type="hidden" id="editGoalId">
-            <div style="grid-column: span 2;">
-              <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Goal
-                Title</label>
-              <input type="text" id="editGoalTitle" required placeholder="Goal Title (e.g. Buy New Laptop)"
-                style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
-            </div>
-            <div style="grid-column: span 2;">
-              <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Goal
-                Details / Description</label>
-              <input type="text" id="editGoalDetails"
-                placeholder="Save money for purchasing a new laptop for studies..."
-                style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
-            </div>
-            <div style="grid-column: span 2;">
-              <label
-                style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Target
-                Amount (₹)</label>
-              <input type="number" id="editGoalTarget" required min="1" step="any" placeholder="80000"
-                style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
-            </div>
-            <div>
-              <label
-                style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Start
-                Date</label>
-              <input type="date" id="editGoalStartDate" aria-label="Start Date" required
-                style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; background: #fff;">
-            </div>
-            <div>
-              <label
-                style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Deadline</label>
-              <input type="date" id="editGoalDeadlineDate" aria-label="Deadline" required
-                style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; background: #fff;">
-            </div>
-          </div>
-          <div class="doc-modal-footer">
-            <button type="submit" class="doc-modal-dl-btn" style="background: var(--primary-brand); color: #fff;">Save
-              Changes</button>
-            <button type="button" class="doc-modal-cancel-btn" onclick="closeEditGoalModal()">Cancel</button>
-          </div>
-        </form>
-      </div>
-    </div>
-
-    <!-- Unified Transaction Modal (Date, Description, Category, Type, Amount) - Responsive PC/Tab/Mobile -->
-    <div id="txModal" class="doc-modal-overlay" style="display: none;" onclick="if(event.target === this) closeTxModal()">
-      <div class="tx-modal-container" role="dialog" aria-modal="true" aria-labelledby="txModalTitle">
-        <!-- Header with Icon Badge -->
-        <div class="tx-modal-header" id="txModalHeader">
-          <div class="tx-header-title-group">
-            <div id="txModalIcon" class="tx-modal-icon income-icon" aria-hidden="true">💰</div>
-            <div>
-              <h3 id="txModalTitle" class="tx-modal-title">Add New Income</h3>
-              <div id="txModalSub" class="tx-modal-sub">Record earnings, salary, or incoming funds</div>
-            </div>
-          </div>
-          <button type="button" class="tx-modal-close" onclick="closeTxModal()" aria-label="Close dialog">&times;</button>
         </div>
 
-        <!-- Transaction Form -->
-        <form id="txModalForm" onsubmit="saveTxForm(event)" class="tx-form">
-          <input type="hidden" id="txId">
-
-          <div class="tx-form-grid">
-            <!-- 1. Transaction Type Toggle (Full Width) -->
-            <div class="tx-col-full">
-              <label class="tx-label">TRANSACTION TYPE</label>
-              <div class="tx-type-selector">
-                <label id="txTypeIncomeLabel" class="tx-type-pill active-income" for="txTypeIncome">
-                  <input type="radio" name="txTypeRadio" id="txTypeIncome" value="income" onchange="onTxTypeChange('income')" checked>
-                  <span class="tx-pill-badge" aria-hidden="true">📈</span>
-                  <span>+ Income</span>
-                </label>
-                <label id="txTypeExpenseLabel" class="tx-type-pill" for="txTypeExpense">
-                  <input type="radio" name="txTypeRadio" id="txTypeExpense" value="expense" onchange="onTxTypeChange('expense')">
-                  <span class="tx-pill-badge" aria-hidden="true">📉</span>
-                  <span>- Expense</span>
-                </label>
-              </div>
-            </div>
-
-            <!-- 2. Amount Field (Column 1 on Desktop/Tablet, stacked on Mobile) -->
-            <div class="tx-col-half">
-              <label class="tx-label" for="txAmount">AMOUNT (₹) <span class="tx-req">*</span></label>
-              <div class="tx-amount-wrapper">
-                <span class="tx-amount-prefix" aria-hidden="true">₹</span>
-                <input type="number" id="txAmount" class="tx-input tx-amount-input" required min="0.01" step="any" placeholder="e.g. 50000" inputmode="decimal">
-              </div>
-            </div>
-
-            <!-- 3. Date Field (Column 2 on Desktop/Tablet, stacked on Mobile) -->
-            <div class="tx-col-half">
-              <label class="tx-label" for="txDate">DATE <span class="tx-req">*</span></label>
-              <input type="date" id="txDate" class="tx-input tx-date-input" required>
-            </div>
-
-            <!-- 4. Category Field (Full Width) -->
-            <div class="tx-col-full">
-              <label class="tx-label" for="txCategory">CATEGORY <span class="tx-req">*</span></label>
-              <div class="tx-select-wrapper">
-                <select id="txCategory" class="tx-select" required>
-                  <!-- Populated dynamically based on Type -->
-                </select>
-                <span class="tx-select-chevron" aria-hidden="true">▼</span>
-              </div>
-            </div>
-
-            <!-- 5. Description Field (Full Width) -->
-            <div class="tx-col-full">
-              <label class="tx-label" for="txDesc">DESCRIPTION <span class="tx-req">*</span></label>
-              <input type="text" id="txDesc" class="tx-input" required placeholder="e.g. Monthly Salary, Freelance project, Groceries" autocomplete="off">
-            </div>
-          </div>
-
-          <!-- Footer Actions -->
-          <div class="tx-modal-footer">
-            <button type="button" id="txCancelBtn" class="tx-btn-cancel" onclick="closeTxModal()">Cancel</button>
-            <button type="submit" id="txSubmitBtn" class="tx-btn-submit income-btn">
-              <span>Save Income</span>
-            </button>
-          </div>
-        </form>
-      </div>
+        <!-- Footer Actions -->
+        <div class="tx-modal-footer">
+          <button type="button" id="txCancelBtn" class="tx-btn-cancel" onclick="closeTxModal()">Cancel</button>
+          <button type="submit" id="txSubmitBtn" class="tx-btn-submit income-btn">
+            <span>Save Income</span>
+          </button>
+        </div>
+      </form>
     </div>
+  </div>
 
-    <script src="script.js"></script>
+  <script src="script.js"></script>
 </body>
 
 </html>
