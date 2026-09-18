@@ -105,11 +105,29 @@ h1, h2, h3, h4 {
   background: var(--bg-card);
   border-bottom: 1px solid var(--border-color);
   padding: 14px 32px;
+  box-shadow: var(--shadow-sm);
+}
+
+.masthead-inner {
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  box-shadow: var(--shadow-sm);
+}
+
+/* Modal Form Grid Utility */
+.modal-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+/* Table Responsive Scroll Wrapper */
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .masthead-left {
@@ -2574,200 +2592,224 @@ footer {
 .badge-status-expired { background: #fee2e2; color: #dc2626; font-weight: 700; padding: 3px 9px; border-radius: 10px; font-size: 11px; }
 
 /* ==========================================================================
-   COMPREHENSIVE RESPONSIVE DESIGN (Mobile, Tablet, Laptop, Desktop)
+   COMPREHENSIVE RESPONSIVE DESIGN ENGINE (Big Screen, Laptop, Tap, Mobile)
    ========================================================================== */
 
-/* ===== MULTI-DEVICE RESPONSIVE DESIGN (Laptops, Tablets & Mobile Phones) ===== */
-
-/* Large Laptops & Desktops (> 1200px) */
-@media (min-width: 1201px) {
+/* ===== 1. Big Screen & Ultra-wide Monitors (> 1440px / 1920px / 4K) ===== */
+@media (min-width: 1441px) {
+  .masthead-inner,
+  .quickentry,
+  nav#mainNav,
   main#mainContent {
-    padding: 24px 32px 60px;
-  }
-}
-
-/* Laptops & Standard Notebooks (993px - 1200px) */
-@media (max-width: 1200px) {
-  .masthead {
-    padding: 12px 24px;
-  }
-  .quickentry {
-    margin: 16px 24px 0;
-  }
-  nav#mainNav {
-    margin: 14px 24px 0;
-  }
-  main#mainContent {
-    padding: 20px 24px 50px;
-  }
-}
-
-/* Tablets (iPad / iPad Pro / Android Tablets) (769px - 992px) */
-@media (max-width: 992px) {
-  .grid-2, .grid-3 {
-    grid-template-columns: 1fr;
-    gap: 16px;
+    max-width: 1560px;
+    margin-left: auto;
+    margin-right: auto;
   }
   .stat-cards-row {
-    grid-template-columns: repeat(2, 1fr);
-    gap: 14px;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 22px;
   }
-  .masthead {
-    gap: 14px;
-    padding: 12px 20px;
+  .grid-3 {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
   }
-  .masthead-user {
-    gap: 12px;
-  }
-  .global-search-container {
-    width: 180px;
-  }
-  .doc-modal-content {
-    width: 88vw !important;
-    max-width: 600px !important;
+  .pwd-card-grid {
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
   }
 }
 
-/* Small Tablets & Mobile Phones (Landscape/Portrait) (481px - 768px) */
+/* ===== 2. Standard Laptops & Notebooks (1025px - 1440px) ===== */
+@media (min-width: 1025px) and (max-width: 1440px) {
+  .masthead { padding: 14px 28px; }
+  .quickentry { margin: 18px 28px 0; }
+  nav#mainNav { margin: 16px 28px 0; }
+  main#mainContent { padding: 22px 28px 50px; max-width: 100%; }
+}
+
+/* ===== 3. Large Tablets & Tap Devices (Landscape iPad / Surface) (769px - 1024px) ===== */
+@media (max-width: 1024px) {
+  .masthead { padding: 12px 20px; }
+  .masthead-inner { flex-wrap: wrap; gap: 14px; }
+  .quickentry { margin: 14px 20px 0; padding: 14px 18px; }
+  nav#mainNav { margin: 14px 20px 0; }
+  main#mainContent { padding: 18px 20px 40px; }
+  
+  .stat-cards-row { grid-template-columns: repeat(2, 1fr); gap: 14px; }
+  .grid-2, .grid-3, .grid-main-side { grid-template-columns: 1fr; gap: 16px; }
+  
+  .global-search-container { width: 180px; }
+  .global-search-input-wrap:focus-within { width: 220px; }
+  
+  .pwd-card-grid { grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); }
+  .pwd-presets-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+  
+  .doc-modal-container {
+    width: 88vw !important;
+    max-width: 640px !important;
+  }
+}
+
+/* ===== 4. Small Tablets & Tap Devices (Portrait iPad / Foldables) (481px - 768px) ===== */
 @media (max-width: 768px) {
-  .masthead {
-    padding: 12px 16px;
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-  .masthead-left {
-    justify-content: space-between;
-  }
-  .masthead-user {
-    justify-content: flex-end;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-  .firebase-header-pill {
-    font-size: 10.5px;
-    padding: 4px 9px;
-  }
-  .global-search-container {
-    width: 140px;
-  }
-  .global-search-input-wrap:focus-within {
-    width: 170px;
-  }
-  .masthead-date {
-    display: none;
-  }
-  .quickentry {
-    margin: 14px 16px 0;
-    padding: 14px;
-  }
+  .masthead { padding: 10px 14px; }
+  .masthead-inner { flex-direction: column; align-items: stretch; gap: 10px; }
+  .masthead-left { justify-content: space-between; width: 100%; }
+  .masthead-user { justify-content: space-between; width: 100%; gap: 8px; flex-wrap: wrap; }
+  
+  .global-search-container { flex: 1; width: auto; min-width: 130px; }
+  .global-search-input-wrap:focus-within { width: 100%; }
+  .masthead-date { display: none; }
+  
+  .quickentry { margin: 12px 14px 0; padding: 12px 14px; }
+  .ai-input-wrap { padding: 8px 10px; gap: 8px; }
+  
   nav#mainNav {
-    margin: 12px 16px 0;
+    margin: 12px 14px 0;
     gap: 6px;
     overflow-x: auto;
     flex-wrap: nowrap;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
+    padding-bottom: 4px;
   }
-  nav#mainNav::-webkit-scrollbar {
-    display: none;
-  }
-  nav#mainNav button {
-    padding: 8px 14px;
-    font-size: 12.5px;
-    white-space: nowrap;
-    flex-shrink: 0;
-  }
-  main#mainContent {
-    padding: 16px 16px 40px;
-  }
+  nav#mainNav::-webkit-scrollbar { display: none; }
+  nav#mainNav button { padding: 8px 14px; font-size: 12.5px; flex-shrink: 0; }
+  
   .subnav-bar {
     overflow-x: auto;
     flex-wrap: nowrap;
-    padding-bottom: 4px;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
+    padding-bottom: 4px;
   }
-  .subnav-bar::-webkit-scrollbar {
-    display: none;
+  .subnav-bar::-webkit-scrollbar { display: none; }
+  .subnav-btn { flex-shrink: 0; }
+  
+  main#mainContent { padding: 14px 14px 36px; }
+  
+  .modal-form-grid {
+    grid-template-columns: 1fr !important;
+    gap: 10px;
   }
-  .subnav-btn {
-    white-space: nowrap;
-    flex-shrink: 0;
+  .modal-form-grid > [style*="grid-column: span 2"],
+  .modal-form-grid > [style*="grid-column:span 2"] {
+    grid-column: span 1 !important;
   }
-  .health-score-card {
-    flex-direction: column;
-    text-align: center;
-    gap: 16px;
-  }
-  .doc-btn-group {
-    flex-wrap: wrap !important;
-  }
-  .doc-modal-content {
+  
+  .doc-modal-container {
     width: 92vw !important;
     max-width: 92vw !important;
-    margin: 10px;
+    padding: 18px !important;
   }
-}
-
-/* Compact Smartphones (iPhone / Android) (<= 480px) */
-@media (max-width: 480px) {
-  .auth-box {
-    width: 92% !important;
-    max-width: 380px !important;
-    padding: 24px 20px !important;
-  }
-  .stat-cards-row {
-    grid-template-columns: 1fr;
-  }
-  .ai-input-wrap {
+  
+  .table-toolbar {
     flex-direction: column;
     align-items: stretch;
-    padding: 10px;
-    gap: 8px;
+    gap: 10px;
   }
-  .ai-submit-btn, .ai-add-btn {
-    width: 100%;
-    justify-content: center;
-  }
+  .table-search { max-width: 100%; }
+  .filter-pills { width: 100%; overflow-x: auto; flex-wrap: nowrap; }
+  .filter-pill { flex-shrink: 0; }
+  
+  .health-score-card { flex-direction: column; text-align: center; gap: 16px; }
+}
+
+/* ===== 5. Compact Mobile Smartphones (<= 480px) ===== */
+@media (max-width: 480px) {
+  body { font-size: 13.5px; }
+  
+  .brand-text h1 { font-size: 16px; }
+  .brand-text .tagline { display: none; }
+  
+  .masthead-user { gap: 6px; }
+  .firebase-header-pill { display: none; }
+  
+  .logout-btn span { display: none; }
+  .logout-btn { padding: 8px; border-radius: 50%; }
+  
+  .quickentry { margin: 10px 10px 0; padding: 12px; }
+  .ai-input-wrap { flex-direction: column; align-items: stretch; padding: 10px; gap: 10px; }
+  .ai-add-btn { width: 100%; justify-content: center; height: 42px; }
+  
   .chips-container {
     overflow-x: auto;
     flex-wrap: nowrap;
-    padding-bottom: 4px;
     -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
   }
-  .chip-btn {
-    white-space: nowrap;
-    flex-shrink: 0;
-  }
-  .addrow, form .pwd-form-grid {
-    flex-direction: column;
-  }
+  .chip-btn { flex-shrink: 0; font-size: 11.5px; }
+  
+  nav#mainNav { margin: 10px 10px 0; }
+  main#mainContent { padding: 12px 10px 30px; }
+  
+  .stat-cards-row { grid-template-columns: 1fr; gap: 12px; }
+  .stat-block { padding: 16px; }
+  .stat-block .sb-value { font-size: 22px; }
+  
+  .card { padding: 16px; margin-bottom: 14px; border-radius: 14px; }
+  .card-header { flex-direction: column; gap: 8px; align-items: flex-start; }
+  
+  .pwd-card-grid { grid-template-columns: 1fr !important; }
+  .pwd-presets-grid { grid-template-columns: repeat(2, 1fr) !important; }
+  
+  .pwd-presets-banner { padding: 16px; }
+  .pwd-preset-chip { font-size: 12px; padding: 10px; }
+  
+  .bill-card { padding: 16px; border-radius: 16px; }
+  .bill-card-actions { flex-wrap: wrap; gap: 6px; }
+  .bill-action-btn { flex: 1; justify-content: center; min-width: 80px; }
+  .bill-pdf-attachment { flex-direction: column; align-items: stretch; gap: 8px; }
+  .bill-pdf-actions { justify-content: flex-end; }
+  
+  .donut-container { flex-direction: column; align-items: center; text-align: center; }
+  .donut-legend { min-width: 100%; }
+  .legend-row { font-size: 12px; }
+  .legend-amt { width: auto; }
+  
+  .health-score-card { flex-direction: column; text-align: center; gap: 14px; padding: 18px; }
+  .health-score-circle { width: 80px; height: 80px; }
+  .health-score-num { font-size: 22px; }
+  
+  .addrow { flex-direction: column; align-items: stretch; }
   .addrow input, .addrow select, .addrow button {
     width: 100% !important;
     min-width: 100% !important;
   }
-  .doc-modal-container {
-    width: 95% !important;
-    max-width: 95% !important;
-    padding: 14px !important;
-  }
-  .pwd-presets-grid {
-    grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
-  }
-  .filter-pills {
+  
+  .table-responsive {
     width: 100%;
-    display: flex;
-    overflow-x: auto;
-  }
-  .filter-pill {
-    flex: 1;
-    text-align: center;
-    white-space: nowrap;
-  }
-  .table-responsive, table {
-    display: block;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+    border-radius: 10px;
+  }
+  
+  .data-table th, .data-table td {
+    padding: 9px 10px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  
+  .modal-form-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .modal-form-grid > [style*="grid-column: span 2"],
+  .modal-form-grid > [style*="grid-column:span 2"] {
+    grid-column: span 1 !important;
+  }
+  
+  .doc-modal-container {
+    width: 95vw !important;
+    max-width: 95vw !important;
+    padding: 14px !important;
+    border-radius: 16px !important;
+  }
+  
+  .toast-box {
+    left: 14px;
+    right: 14px;
+    bottom: 14px;
+    font-size: 12px;
+    padding: 10px 14px;
   }
 }
 
