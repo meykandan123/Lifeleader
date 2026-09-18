@@ -725,10 +725,14 @@ function parseEntry(text) {
     return { type: "Bill", name: text.replace(/(?:₹|rs\.?)\s?\d[\d,]*/gi, "").replace(/is due.*$/i, "").trim() || "New Bill", amount, due: todayIso };
   }
   if (isIncome && amount) {
-    return { type: "Income", amount, source: text.replace(/\d+/g, "").replace(/received|salary|credited/gi, "").trim() || "Income", date: todayIso };
+    let cleanSource = text.replace(/(?:₹|rs\.?|inr|\$|,)/gi, "").replace(/\d+/g, "").replace(/received|salary|credited|earned|got paid|income/gi, "").trim();
+    if (!cleanSource || cleanSource.length < 2) cleanSource = "Monthly Salary";
+    return { type: "Income", amount, source: cleanSource, category: "Salary", date: todayIso };
   }
   if (amount) {
-    return { type: "Expense", amount, category: detectCategory(text), desc: text.replace(/(?:₹|rs\.?)\s?\d[\d,]*/gi, "").trim() || "Expense", date: todayIso };
+    let cleanDesc = text.replace(/(?:₹|rs\.?|inr|\$)/gi, "").replace(/\b\d[\d,]*\b/g, "").replace(/spent on|spent for|paid for|paid/gi, "").trim();
+    if (!cleanDesc || cleanDesc.length < 2) cleanDesc = "Expense";
+    return { type: "Expense", amount, category: detectCategory(text), desc: cleanDesc, date: todayIso };
   }
   return { type: "Task", title: text.trim(), priority: low.includes("urgent") || low.includes("tomorrow") ? "high" : "medium", deadline: "Tomorrow" };
 }
@@ -743,9 +747,9 @@ function handleParsed(p) {
   }
   if (p.type === "Income") {
     const incDate = (p.date && p.date !== "Today") ? p.date : todayIso;
-    state.income.unshift({ id: Date.now(), source: p.source, amount: p.amount, date: incDate, category: "Income" });
+    state.income.unshift({ id: Date.now(), source: p.source, amount: p.amount, date: incDate, category: p.category || "Salary" });
     saveSessionData();
-    return `<div class="pr-row"><span class="pr-field">Type: <b>Income</b></span><span class="pr-field">Amount: <b>${fmt(p.amount)}</b></span></div>`;
+    return `<div class="pr-row"><span class="pr-field">Type: <b>Income</b></span><span class="pr-field">Amount: <b>${fmt(p.amount)}</b></span><span class="pr-field">Category: <b>${p.category || 'Salary'}</b></span></div>`;
   }
   if (p.type === "Bill") {
     const billDue = (p.due && p.due !== "Next Week") ? p.due : todayIso;
@@ -1394,6 +1398,44 @@ function viewDashboard() {
     </div>
   </div>
 
+  <!-- Recent Transactions Card on Dashboard -->
+  <div class="card" style="margin-bottom: 24px;">
+    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+      <div>
+        <h2>Recent Transactions</h2>
+        <div class="sub">Latest logged income and expenses for ${getMonthYearLabel(currentMonth)}</div>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <button type="button" onclick="openAddIncomeModal()" style="background:var(--green-soft, #ecfdf5); color:var(--green-dark, #059669); border:1px solid var(--green-border, #a7f3d0); padding:6px 13px; border-radius:8px; font-weight:700; cursor:pointer; font-size:12.5px; display:inline-flex; align-items:center; gap:5px;">
+          + Add Income
+        </button>
+        <button type="button" onclick="openAddExpenseModal()" style="background:var(--indigo-soft, #eef2ff); color:var(--primary-brand, #4f46e5); border:1px solid var(--indigo-border, #c7d2fe); padding:6px 13px; border-radius:8px; font-weight:700; cursor:pointer; font-size:12.5px; display:inline-flex; align-items:center; gap:5px;">
+          + Add Expense
+        </button>
+        <button type="button" onclick="setTab('finance')" style="background:#f1f5f9; color:#475569; border:1px solid var(--border-color); padding:6px 13px; border-radius:8px; font-weight:600; cursor:pointer; font-size:12.5px;">
+          View All &rarr;
+        </button>
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>DATE</th>
+            <th>DESCRIPTION</th>
+            <th>CATEGORY</th>
+            <th>TYPE</th>
+            <th style="text-align:right;">AMOUNT</th>
+            <th style="text-align:center;">ACTIONS</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${renderDashboardTxRows(mExpList, mIncList)}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- Bottom Row Widgets (3 Columns Grid) -->
   <div class="grid-3">
     <!-- Column 1: Upcoming -->
@@ -1513,6 +1555,168 @@ function viewDashboard() {
   </div>`;
 }
 
+/* ===== 2. FINANCE VIEW HELPERS ===== */
+function renderTxTableRows(expList, incList, currentMonth) {
+  const list = [];
+  (expList || []).forEach(e => {
+    list.push({
+      type: 'expense',
+      date: e.date || '',
+      desc: e.desc || 'Expense',
+      category: e.category || 'Other',
+      catClass: (e.category || 'Other').split(' ')[0],
+      amount: e.amount || 0,
+      id: e.id
+    });
+  });
+
+  (incList || []).forEach(i => {
+    let rawDesc = i.source || '';
+    if (!rawDesc || rawDesc === '₹,' || rawDesc === '₹' || rawDesc === ',') {
+      rawDesc = i.category || 'Salary';
+    }
+    list.push({
+      type: 'income',
+      date: i.date || '',
+      desc: rawDesc,
+      category: i.category || 'Salary',
+      catClass: (i.category || 'Salary').split(' ')[0],
+      amount: i.amount || 0,
+      id: i.id
+    });
+  });
+
+  // Sort descending by date
+  list.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+  if (list.length === 0) {
+    const periodLabel = currentMonth ? getMonthYearLabel(currentMonth) : 'this period';
+    return `
+      <tr>
+        <td colspan="6" style="text-align:center; padding: 28px; color:var(--text-muted);">
+          No transactions found for <strong>${periodLabel}</strong>. Use <strong>+ Add Income</strong> or <strong>+ Add Expense</strong> to record entries!
+        </td>
+      </tr>
+    `;
+  }
+
+  return list.map(item => {
+    if (item.type === 'expense') {
+      return `
+        <tr>
+          <td class="num">${item.date}</td>
+          <td style="font-weight:600; color:#0f172a;">${item.desc}</td>
+          <td><span class="cat-badge ${item.catClass}">${item.category}</span></td>
+          <td><span class="type-pill expense">Expense</span></td>
+          <td style="text-align:right;" class="amt-neg">-${fmt(item.amount)}</td>
+          <td style="text-align:center; white-space:nowrap;">
+            <div class="action-btn-group" style="justify-content: center;">
+              <button type="button" class="action-btn edit-btn" onclick="openEditExpenseModal('${item.id}')" title="Edit Expense">✏️ Edit</button>
+              <button type="button" class="action-btn danger-btn" onclick="deleteExpense('${item.id}')" title="Delete Expense">🗑️ Delete</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    } else {
+      return `
+        <tr>
+          <td class="num">${item.date}</td>
+          <td style="font-weight:600; color:#0f172a;">${item.desc}</td>
+          <td><span class="cat-badge ${item.catClass}">${item.category}</span></td>
+          <td><span class="type-pill income">Income</span></td>
+          <td style="text-align:right;" class="amt-pos">+${fmt(item.amount)}</td>
+          <td style="text-align:center; white-space:nowrap;">
+            <div class="action-btn-group" style="justify-content: center;">
+              <button type="button" class="action-btn edit-btn" onclick="openEditIncomeModal('${item.id}')" title="Edit Income">✏️ Edit</button>
+              <button type="button" class="action-btn danger-btn" onclick="deleteIncome('${item.id}')" title="Delete Income">🗑️ Delete</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }
+  }).join('');
+}
+
+function renderDashboardTxRows(expList, incList) {
+  const list = [];
+  (expList || []).forEach(e => {
+    list.push({
+      type: 'expense',
+      date: e.date || '',
+      desc: e.desc || 'Expense',
+      category: e.category || 'Other',
+      catClass: (e.category || 'Other').split(' ')[0],
+      amount: e.amount || 0,
+      id: e.id
+    });
+  });
+
+  (incList || []).forEach(i => {
+    let rawDesc = i.source || '';
+    if (!rawDesc || rawDesc === '₹,' || rawDesc === '₹' || rawDesc === ',') {
+      rawDesc = i.category || 'Salary';
+    }
+    list.push({
+      type: 'income',
+      date: i.date || '',
+      desc: rawDesc,
+      category: i.category || 'Salary',
+      catClass: (i.category || 'Salary').split(' ')[0],
+      amount: i.amount || 0,
+      id: i.id
+    });
+  });
+
+  list.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const recent = list.slice(0, 5);
+
+  if (recent.length === 0) {
+    return `
+      <tr>
+        <td colspan="6" style="text-align:center; padding: 24px; color:var(--text-muted); font-size:13px;">
+          No transactions logged yet. Click <strong>+ Add Income</strong> or <strong>+ Add Expense</strong> above to record your first entry!
+        </td>
+      </tr>
+    `;
+  }
+
+  return recent.map(item => {
+    if (item.type === 'expense') {
+      return `
+        <tr>
+          <td class="num">${item.date}</td>
+          <td style="font-weight:600; color:#0f172a;">${item.desc}</td>
+          <td><span class="cat-badge ${item.catClass}">${item.category}</span></td>
+          <td><span class="type-pill expense">Expense</span></td>
+          <td style="text-align:right;" class="amt-neg">-${fmt(item.amount)}</td>
+          <td style="text-align:center; white-space:nowrap;">
+            <div class="action-btn-group" style="justify-content: center;">
+              <button type="button" class="action-btn edit-btn" onclick="openEditExpenseModal('${item.id}')" title="Edit Expense">✏️ Edit</button>
+              <button type="button" class="action-btn danger-btn" onclick="deleteExpense('${item.id}')" title="Delete Expense">🗑️ Delete</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    } else {
+      return `
+        <tr>
+          <td class="num">${item.date}</td>
+          <td style="font-weight:600; color:#0f172a;">${item.desc}</td>
+          <td><span class="cat-badge ${item.catClass}">${item.category}</span></td>
+          <td><span class="type-pill income">Income</span></td>
+          <td style="text-align:right;" class="amt-pos">+${fmt(item.amount)}</td>
+          <td style="text-align:center; white-space:nowrap;">
+            <div class="action-btn-group" style="justify-content: center;">
+              <button type="button" class="action-btn edit-btn" onclick="openEditIncomeModal('${item.id}')" title="Edit Income">✏️ Edit</button>
+              <button type="button" class="action-btn danger-btn" onclick="deleteIncome('${item.id}')" title="Delete Income">🗑️ Delete</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }
+  }).join('');
+}
+
 /* ===== 2. FINANCE VIEW ===== */
 function viewFinance() {
   if (!currentUser) return '<div class="card"><p>Please log in to view finance.</p></div>';
@@ -1539,12 +1743,18 @@ function viewFinance() {
       <h2>Finance Overview</h2>
       <div class="sub" style="color:var(--text-muted);">Real-time breakdown of logged entries for <strong>${getMonthYearLabel(currentMonth)}</strong></div>
     </div>
-    <div style="display:flex; gap:10px; align-items:center;">
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
       <label style="font-size: 12px; font-weight: 700; color: var(--text-muted);">Period:</label>
       <select id="financeMonthFilter" onchange="changeFinanceMonthFilter(this.value)" style="padding: 6px 12px; border-radius: 8px; font-weight: 700; border: 1px solid var(--border-color); background: #fff; font-size: 12.5px;">
         ${availableMonths.map(m => `<option value="${m}" ${m === currentMonth ? 'selected' : ''}>${getMonthYearLabel(m)}</option>`).join('')}
       </select>
       <button id="exportCsvBtn" style="background:#ffffff; border:1px solid var(--border-color); padding:8px 16px; border-radius:10px; font-weight:600; cursor:pointer; font-size:13px;">Export CSV</button>
+      <button type="button" id="financeAddIncomeBtn" onclick="openAddIncomeModal()" style="background:#059669; color:#ffffff; border:none; padding:8px 16px; border-radius:10px; font-weight:700; cursor:pointer; font-size:13px; display:inline-flex; align-items:center; gap:6px; box-shadow: 0 2px 6px rgba(5,150,105,0.25);">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> + Income
+      </button>
+      <button type="button" id="financeAddExpenseBtn" onclick="openAddExpenseModal()" style="background:var(--primary-brand); color:#ffffff; border:none; padding:8px 16px; border-radius:10px; font-weight:700; cursor:pointer; font-size:13px; display:inline-flex; align-items:center; gap:6px; box-shadow: 0 2px 6px rgba(79,70,229,0.25);">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> + Expense
+      </button>
     </div>
   </div>
 
@@ -1660,10 +1870,18 @@ function viewFinance() {
 
   <!-- Transactions Table -->
   <div class="card">
-    <div class="card-header" style="margin-bottom:12px;">
+    <div class="card-header" style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
       <div>
         <h2>Transactions</h2>
         <div class="sub">${mExpList.length + mIncList.length} entries for ${getMonthYearLabel(currentMonth)}</div>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button type="button" id="txCardAddIncomeBtn" onclick="openAddIncomeModal()" style="background:var(--green-soft, #ecfdf5); color:var(--green-dark, #059669); border:1px solid var(--green-border, #a7f3d0); padding:6px 13px; border-radius:8px; font-weight:700; cursor:pointer; font-size:12.5px; display:inline-flex; align-items:center; gap:5px;">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add Income
+        </button>
+        <button type="button" id="txCardAddExpenseBtn" onclick="openAddExpenseModal()" style="background:var(--indigo-soft, #eef2ff); color:var(--primary-brand, #4f46e5); border:1px solid var(--indigo-border, #c7d2fe); padding:6px 13px; border-radius:8px; font-weight:700; cursor:pointer; font-size:12.5px; display:inline-flex; align-items:center; gap:5px;">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add Expense
+        </button>
       </div>
     </div>
 
@@ -1691,32 +1909,7 @@ function viewFinance() {
         </tr>
       </thead>
       <tbody id="txTableBody">
-        ${mExpList.map(e => `
-          <tr>
-            <td class="num">${e.date}</td>
-            <td style="font-weight:600; color:#0f172a;">${e.desc}</td>
-            <td><span class="cat-badge ${e.category.split(' ')[0]}">${e.category}</span></td>
-            <td><span class="type-pill expense">Expense</span></td>
-            <td style="text-align:right;" class="amt-neg">-${fmt(e.amount)}</td>
-            <td style="text-align:center;"><button style="background:none; border:none; color:var(--red-main); cursor:pointer; font-weight:600;" onclick="deleteExpense('${e.id}')">Delete</button></td>
-          </tr>
-        `).join("")}
-        ${mIncList.map(i => `
-          <tr>
-            <td class="num">${i.date}</td>
-            <td style="font-weight:600; color:#0f172a;">${i.source}</td>
-            <td><span class="cat-badge Salary">Salary</span></td>
-            <td><span class="type-pill income">Income</span></td>
-            <td style="text-align:right;" class="amt-pos">+${fmt(i.amount)}</td>
-            <td style="text-align:center;">—</td>
-          </tr>
-        `).join("")}
-        ${(mExpList.length === 0 && mIncList.length === 0) ? `
-          <tr>
-            <td colspan="6" style="text-align:center; padding: 24px; color:var(--text-muted);">
-              No transactions logged for <strong>${getMonthYearLabel(currentMonth)}</strong>. Add an expense or income above!
-            </td>
-          </tr>` : ''}
+        ${renderTxTableRows(mExpList, mIncList, currentMonth)}
       </tbody>
     </table>
   </div>`;
@@ -3413,19 +3606,397 @@ function viewGoals() {
    EVENT HANDLERS
    ========================================================================== */
 
-function deleteExpense(id) {
-  const exp = state.expenses.find(e => e.id === id);
-  if (exp && exp.source === "bill") {
-    const billId = exp.sourceId || exp.id;
-    state.bills = state.bills.filter(b => b.id !== billId);
+/* ==========================================================================
+   FINANCE TRANSACTIONS & MODAL EVENT HANDLERS
+   ========================================================================== */
+
+/* ==========================================================================
+   FINANCE TRANSACTIONS & MODAL EVENT HANDLERS
+   ========================================================================== */
+
+const INCOME_CATEGORIES = [
+  "Salary",
+  "Freelance",
+  "Business",
+  "Investment",
+  "Bonus",
+  "Gift",
+  "Income",
+  "Other"
+];
+
+const EXPENSE_CATEGORIES = [
+  "Food & Dining",
+  "Housing & Rent",
+  "Transport",
+  "Utilities",
+  "Electricity",
+  "Water",
+  "Internet",
+  "Mobile",
+  "Rent",
+  "Credit Card",
+  "Loan",
+  "Insurance",
+  "Entertainment",
+  "Healthcare",
+  "Shopping",
+  "Subscriptions",
+  "Education",
+  "Other"
+];
+
+function populateTxCategories(type, selectedCat) {
+  const catSelect = document.getElementById("txCategory");
+  if (!catSelect) return;
+  const baseCats = type === "income" ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+  const cats = [...baseCats];
+  if (selectedCat && !cats.includes(selectedCat)) {
+    cats.push(selectedCat);
   }
-  state.expenses = state.expenses.filter(e => e.id !== id);
+  catSelect.innerHTML = cats.map(c => `<option value="${c}" ${c === selectedCat ? 'selected' : ''}>${c}</option>`).join("");
+  if (selectedCat) {
+    catSelect.value = selectedCat;
+  }
+}
+
+function onTxTypeChange(type) {
+  const incomeRadio = document.getElementById("txTypeIncome");
+  const expenseRadio = document.getElementById("txTypeExpense");
+  const incomeLabel = document.getElementById("txTypeIncomeLabel");
+  const expenseLabel = document.getElementById("txTypeExpenseLabel");
+  const submitBtn = document.getElementById("txSubmitBtn");
+  const titleEl = document.getElementById("txModalTitle");
+  const subEl = document.getElementById("txModalSub");
+  const iconEl = document.getElementById("txModalIcon");
+  const idEl = document.getElementById("txId");
+  const id = idEl ? idEl.value : "";
+
+  if (type === "income") {
+    if (incomeRadio) incomeRadio.checked = true;
+    if (incomeLabel) {
+      incomeLabel.classList.add("active-income");
+      incomeLabel.classList.remove("active-expense");
+      incomeLabel.style.borderColor = "";
+      incomeLabel.style.background = "";
+      incomeLabel.style.color = "";
+    }
+    if (expenseLabel) {
+      expenseLabel.classList.remove("active-expense");
+      expenseLabel.classList.remove("active-income");
+      expenseLabel.style.borderColor = "";
+      expenseLabel.style.background = "";
+      expenseLabel.style.color = "";
+    }
+    if (iconEl) {
+      iconEl.textContent = "💰";
+      iconEl.className = "tx-modal-icon income-icon";
+    }
+    if (submitBtn) {
+      submitBtn.className = "tx-btn-submit income-btn";
+      submitBtn.style.background = "";
+      submitBtn.textContent = id ? "Update Income" : "Save Income";
+    }
+    if (titleEl && !id) titleEl.textContent = "Add New Income";
+    if (subEl && !id) subEl.textContent = "Record earnings, salary, or incoming funds";
+    populateTxCategories("income");
+  } else {
+    if (expenseRadio) expenseRadio.checked = true;
+    if (expenseLabel) {
+      expenseLabel.classList.add("active-expense");
+      expenseLabel.classList.remove("active-income");
+      expenseLabel.style.borderColor = "";
+      expenseLabel.style.background = "";
+      expenseLabel.style.color = "";
+    }
+    if (incomeLabel) {
+      incomeLabel.classList.remove("active-income");
+      incomeLabel.classList.remove("active-expense");
+      incomeLabel.style.borderColor = "";
+      incomeLabel.style.background = "";
+      incomeLabel.style.color = "";
+    }
+    if (iconEl) {
+      iconEl.textContent = "💳";
+      iconEl.className = "tx-modal-icon expense-icon";
+    }
+    if (submitBtn) {
+      submitBtn.className = "tx-btn-submit expense-btn";
+      submitBtn.style.background = "";
+      submitBtn.textContent = id ? "Update Expense" : "Save Expense";
+    }
+    if (titleEl && !id) titleEl.textContent = "Add New Expense";
+    if (subEl && !id) subEl.textContent = "Record money spent with category and date";
+    populateTxCategories("expense");
+  }
+}
+
+function openAddIncomeModal() {
+  const modal = document.getElementById("txModal");
+  if (!modal) return;
+  const idEl = document.getElementById("txId");
+  const descEl = document.getElementById("txDesc");
+  const amtEl = document.getElementById("txAmount");
+  const dateEl = document.getElementById("txDate");
+  const titleEl = document.getElementById("txModalTitle");
+  const subEl = document.getElementById("txModalSub");
+
+  if (idEl) idEl.value = "";
+  if (descEl) descEl.value = "";
+  if (amtEl) amtEl.value = "";
+  const todayIso = new Date().toISOString().split("T")[0];
+  if (dateEl) dateEl.value = todayIso;
+  if (titleEl) titleEl.textContent = "Add New Income";
+  if (subEl) subEl.textContent = "Record earnings, salary, or incoming funds";
+
+  onTxTypeChange("income");
+  populateTxCategories("income", "Salary");
+  modal.style.display = "flex";
+  if (descEl) descEl.focus();
+}
+
+function openAddExpenseModal() {
+  const modal = document.getElementById("txModal");
+  if (!modal) return;
+  const idEl = document.getElementById("txId");
+  const descEl = document.getElementById("txDesc");
+  const amtEl = document.getElementById("txAmount");
+  const dateEl = document.getElementById("txDate");
+  const titleEl = document.getElementById("txModalTitle");
+  const subEl = document.getElementById("txModalSub");
+
+  if (idEl) idEl.value = "";
+  if (descEl) descEl.value = "";
+  if (amtEl) amtEl.value = "";
+  const todayIso = new Date().toISOString().split("T")[0];
+  if (dateEl) dateEl.value = todayIso;
+  if (titleEl) titleEl.textContent = "Add New Expense";
+  if (subEl) subEl.textContent = "Record money spent with category and date";
+
+  onTxTypeChange("expense");
+  populateTxCategories("expense", "Food & Dining");
+  modal.style.display = "flex";
+  if (descEl) descEl.focus();
+}
+
+function openEditExpenseModal(id) {
+  const exp = (state.expenses || []).find(e => String(e.id) === String(id) || String(e.sourceId) === String(id));
+  if (!exp) return;
+  const modal = document.getElementById("txModal");
+  if (!modal) return;
+
+  const idEl = document.getElementById("txId");
+  const descEl = document.getElementById("txDesc");
+  const amtEl = document.getElementById("txAmount");
+  const dateEl = document.getElementById("txDate");
+  const titleEl = document.getElementById("txModalTitle");
+  const subEl = document.getElementById("txModalSub");
+
+  if (idEl) idEl.value = exp.id;
+  if (descEl) descEl.value = exp.desc || "";
+  if (amtEl) amtEl.value = exp.amount || "";
+  if (dateEl) dateEl.value = exp.date || new Date().toISOString().split("T")[0];
+  if (titleEl) titleEl.textContent = "Edit Expense";
+  if (subEl) subEl.textContent = "Update expense details, amount, category, or date";
+
+  onTxTypeChange("expense");
+  populateTxCategories("expense", exp.category || "Food & Dining");
+  modal.style.display = "flex";
+  if (descEl) descEl.focus();
+}
+
+function openEditIncomeModal(id) {
+  const inc = (state.income || []).find(i => String(i.id) === String(id));
+  if (!inc) return;
+  const modal = document.getElementById("txModal");
+  if (!modal) return;
+
+  const idEl = document.getElementById("txId");
+  const descEl = document.getElementById("txDesc");
+  const amtEl = document.getElementById("txAmount");
+  const dateEl = document.getElementById("txDate");
+  const titleEl = document.getElementById("txModalTitle");
+  const subEl = document.getElementById("txModalSub");
+
+  let cleanDesc = inc.source || "";
+  if (!cleanDesc || cleanDesc === "₹," || cleanDesc === "₹" || cleanDesc === ",") {
+    cleanDesc = inc.category || "Salary";
+  }
+
+  if (idEl) idEl.value = inc.id;
+  if (descEl) descEl.value = cleanDesc;
+  if (amtEl) amtEl.value = inc.amount || "";
+  if (dateEl) dateEl.value = inc.date || new Date().toISOString().split("T")[0];
+  if (titleEl) titleEl.textContent = "Edit Income";
+  if (subEl) subEl.textContent = "Update income source, amount, category, or date";
+
+  onTxTypeChange("income");
+  populateTxCategories("income", inc.category || "Salary");
+  modal.style.display = "flex";
+  if (descEl) descEl.focus();
+}
+
+function closeTxModal() {
+  const modal = document.getElementById("txModal");
+  if (modal) modal.style.display = "none";
+}
+
+function saveTxForm(e) {
+  if (e) e.preventDefault();
+  const id = document.getElementById("txId").value;
+  const date = document.getElementById("txDate").value;
+  const desc = document.getElementById("txDesc").value.trim();
+  const category = document.getElementById("txCategory").value;
+  const amount = parseFloat(document.getElementById("txAmount").value);
+  const typeRadio = document.querySelector('input[name="txTypeRadio"]:checked');
+  const type = typeRadio ? typeRadio.value : "income";
+
+  if (!date || !desc || isNaN(amount) || amount <= 0 || !category) {
+    showToast("Please provide valid Date, Description, Category, and Amount.");
+    return;
+  }
+
+  if (!Array.isArray(state.income)) state.income = [];
+  if (!Array.isArray(state.expenses)) state.expenses = [];
+
+  if (type === "income") {
+    if (id) {
+      // Check if was previously linked to a bill, delete bill so it doesn't regenerate
+      const expItem = state.expenses.find(x => String(x.id) === String(id) || String(x.sourceId) === String(id));
+      if (expItem && (expItem.sourceType === "bill" || expItem.source === "bill" || expItem.sourceId)) {
+        const bId = expItem.sourceId || expItem.id;
+        state.bills = (state.bills || []).filter(b => String(b.id) !== String(bId));
+      }
+      state.expenses = state.expenses.filter(x => String(x.id) !== String(id) && String(x.sourceId) !== String(id));
+
+      const existingInc = state.income.find(x => String(x.id) === String(id));
+      if (existingInc) {
+        existingInc.date = date;
+        existingInc.source = desc;
+        existingInc.category = category;
+        existingInc.amount = amount;
+      } else {
+        state.income.unshift({ id: Date.now(), date, source: desc, category, amount });
+      }
+      showToast(`Income of ₹${amount.toLocaleString('en-IN')} updated!`);
+    } else {
+      state.income.unshift({ id: Date.now(), date, source: desc, category, amount });
+      showToast(`Income of ₹${amount.toLocaleString('en-IN')} added and synced!`);
+    }
+  } else {
+    // Expense
+    if (id) {
+      // If was previously in income, remove from income
+      state.income = state.income.filter(x => String(x.id) !== String(id));
+
+      let existingExp = state.expenses.find(x => String(x.id) === String(id) || String(x.sourceId) === String(id));
+      if (existingExp) {
+        existingExp.date = date;
+        existingExp.desc = desc;
+        existingExp.category = category;
+        existingExp.amount = amount;
+
+        // If this expense is tied to a bill in state.bills, update the bill too so it doesn't get reverted!
+        if (existingExp.sourceType === "bill" || existingExp.source === "bill" || existingExp.sourceId) {
+          const bId = existingExp.sourceId || existingExp.id;
+          const matchingBill = (state.bills || []).find(b => String(b.id) === String(bId));
+          if (matchingBill) {
+            matchingBill.amount = amount;
+            matchingBill.due = date;
+            matchingBill.dueDate = date;
+            matchingBill.category = category;
+            if (desc.startsWith("Bill: ")) {
+              matchingBill.name = desc.substring(6).trim();
+            } else {
+              matchingBill.name = desc;
+            }
+          }
+        }
+      } else {
+        state.expenses.unshift({ id: Date.now(), date, desc, category, amount });
+      }
+      showToast(`Expense of ₹${amount.toLocaleString('en-IN')} updated!`);
+    } else {
+      state.expenses.unshift({ id: Date.now(), date, desc, category, amount });
+      showToast(`Expense of ₹${amount.toLocaleString('en-IN')} added and synced!`);
+    }
+  }
+
+  // Update selected month key to match the transaction date so user sees it right away
+  const txMonthKey = getMonthYearKey(date);
+  if (txMonthKey) {
+    selectedFinanceMonthYear = txMonthKey;
+  }
+
   saveSessionData();
+  closeTxModal();
   renderMain();
 }
 
+function deleteExpense(id) {
+  if (!confirm("Are you sure you want to delete this expense?")) return;
+  const exp = (state.expenses || []).find(e => String(e.id) === String(id) || String(e.sourceId) === String(id));
+  if (exp && (exp.source === "bill" || exp.sourceType === "bill" || exp.sourceId)) {
+    const billId = exp.sourceId || exp.id;
+    state.bills = (state.bills || []).filter(b => String(b.id) !== String(billId));
+  }
+  state.expenses = (state.expenses || []).filter(e => String(e.id) !== String(id) && String(e.sourceId) !== String(id));
+  saveSessionData();
+  renderMain();
+  showToast("Expense deleted and database updated.");
+}
+
+function deleteIncome(id) {
+  if (!confirm("Are you sure you want to delete this income entry?")) return;
+  state.income = (state.income || []).filter(i => String(i.id) !== String(id));
+  saveSessionData();
+  renderMain();
+  showToast("Income deleted and database updated.");
+}
+
+// Aliases for compatibility
+function closeExpenseModal() { closeTxModal(); }
+function closeIncomeModal() { closeTxModal(); }
+
+// Expose on window for global inline event handlers
+window.onTxTypeChange = onTxTypeChange;
+window.openAddExpenseModal = openAddExpenseModal;
+window.openEditExpenseModal = openEditExpenseModal;
+window.closeExpenseModal = closeExpenseModal;
+window.deleteExpense = deleteExpense;
+window.openAddIncomeModal = openAddIncomeModal;
+window.openEditIncomeModal = openEditIncomeModal;
+window.closeIncomeModal = closeIncomeModal;
+window.closeTxModal = closeTxModal;
+window.saveTxForm = saveTxForm;
+window.deleteIncome = deleteIncome;
+
 function attachHandlers() {
   const $ = id => document.getElementById(id);
+
+  // Add Income and Add Expense Button Handlers
+  if ($("financeAddIncomeBtn")) $("financeAddIncomeBtn").onclick = (e) => { e.preventDefault(); openAddIncomeModal(); };
+  if ($("financeAddExpenseBtn")) $("financeAddExpenseBtn").onclick = (e) => { e.preventDefault(); openAddExpenseModal(); };
+  if ($("txCardAddIncomeBtn")) $("txCardAddIncomeBtn").onclick = (e) => { e.preventDefault(); openAddIncomeModal(); };
+  if ($("txCardAddExpenseBtn")) $("txCardAddExpenseBtn").onclick = (e) => { e.preventDefault(); openAddExpenseModal(); };
+
+  // Close modal when clicking outside modal container or pressing Escape
+  const txModalEl = $("txModal");
+  if (txModalEl && !txModalEl.dataset.backdropBound) {
+    txModalEl.dataset.backdropBound = "true";
+    txModalEl.addEventListener("click", (e) => {
+      if (e.target === txModalEl) closeTxModal();
+    });
+  }
+  if (!window._txModalEscBound) {
+    window._txModalEscBound = true;
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        const m = document.getElementById("txModal");
+        if (m && m.style.display !== "none") closeTxModal();
+      }
+    });
+  }
 
   // CSV Export
   if ($("exportCsvBtn")) {
@@ -3434,7 +4005,13 @@ function attachHandlers() {
       const mExp = getFinanceExpensesForMonth(selectedFinanceMonthYear);
       const mInc = getFinanceIncomeForMonth(selectedFinanceMonthYear);
       mExp.forEach(e => csv += `"${e.date}","${e.desc}","${e.category}","Expense",-${e.amount}\n`);
-      mInc.forEach(i => csv += `"${i.date}","${i.source}","Salary","Income",${i.amount}\n`);
+      mInc.forEach(i => {
+        let cleanDesc = i.source || '';
+        if (!cleanDesc || cleanDesc === '₹,' || cleanDesc === '₹' || cleanDesc === ',') {
+          cleanDesc = i.category || 'Salary';
+        }
+        csv += `"${i.date}","${cleanDesc}","${i.category || 'Salary'}","Income",${i.amount}\n`;
+      });
       const blob = new Blob([csv], { type: 'text/csv' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -3700,66 +4277,36 @@ function attachHandlers() {
       if (filter === "income") expList = [];
       if (filter === "expense") incList = [];
 
-      tbody.innerHTML = `
-        ${expList.map(e => `
-          <tr>
-            <td class="num">${e.date}</td>
-            <td style="font-weight:600; color:#0f172a;">${e.desc}</td>
-            <td><span class="cat-badge ${e.category.split(' ')[0]}">${e.category}</span></td>
-            <td><span class="type-pill expense">Expense</span></td>
-            <td style="text-align:right;" class="amt-neg">-${fmt(e.amount)}</td>
-            <td style="text-align:center;"><button style="background:none; border:none; color:var(--red-main); cursor:pointer; font-weight:600;" onclick="deleteExpense('${e.id}')">Delete</button></td>
-          </tr>
-        `).join("")}
-        ${incList.map(i => `
-          <tr>
-            <td class="num">${i.date}</td>
-            <td style="font-weight:600; color:#0f172a;">${i.source}</td>
-            <td><span class="cat-badge Salary">Salary</span></td>
-            <td><span class="type-pill income">Income</span></td>
-            <td style="text-align:right;" class="amt-pos">+${fmt(i.amount)}</td>
-            <td style="text-align:center;">—</td>
-          </tr>
-        `).join("")}
-      `;
+      const searchInput = $("txSearchInput");
+      const q = searchInput ? searchInput.value.toLowerCase().trim() : "";
+      if (q) {
+        expList = expList.filter(x => (x.desc || "").toLowerCase().includes(q) || (x.category || "").toLowerCase().includes(q));
+        incList = incList.filter(x => (x.source || "").toLowerCase().includes(q) || (x.category || "").toLowerCase().includes(q));
+      }
+
+      tbody.innerHTML = renderTxTableRows(expList, incList, selectedFinanceMonthYear);
     });
   });
 
   // Table Search Filter
   if ($("txSearchInput")) {
     $("txSearchInput").addEventListener("input", e => {
-      const q = e.target.value.toLowerCase();
+      const q = e.target.value.toLowerCase().trim();
       const tbody = $("txTableBody");
       if (!tbody) return;
 
       const mExp = getFinanceExpensesForMonth(selectedFinanceMonthYear);
       const mInc = getFinanceIncomeForMonth(selectedFinanceMonthYear);
 
-      const expList = mExp.filter(x => x.desc.toLowerCase().includes(q) || x.category.toLowerCase().includes(q));
-      const incList = mInc.filter(x => x.source.toLowerCase().includes(q));
+      let expList = mExp.filter(x => (x.desc || "").toLowerCase().includes(q) || (x.category || "").toLowerCase().includes(q));
+      let incList = mInc.filter(x => (x.source || "").toLowerCase().includes(q) || (x.category || "").toLowerCase().includes(q));
 
-      tbody.innerHTML = `
-        ${expList.map(e => `
-          <tr>
-            <td class="num">${e.date}</td>
-            <td style="font-weight:600; color:#0f172a;">${e.desc}</td>
-            <td><span class="cat-badge ${e.category.split(' ')[0]}">${e.category}</span></td>
-            <td><span class="type-pill expense">Expense</span></td>
-            <td style="text-align:right;" class="amt-neg">-${fmt(e.amount)}</td>
-            <td style="text-align:center;"><button style="background:none; border:none; color:var(--red-main); cursor:pointer; font-weight:600;" onclick="deleteExpense('${e.id}')">Delete</button></td>
-          </tr>
-        `).join("")}
-        ${incList.map(i => `
-          <tr>
-            <td class="num">${i.date}</td>
-            <td style="font-weight:600; color:#0f172a;">${i.source}</td>
-            <td><span class="cat-badge Salary">Salary</span></td>
-            <td><span class="type-pill income">Income</span></td>
-            <td style="text-align:right;" class="amt-pos">+${fmt(i.amount)}</td>
-            <td style="text-align:center;">—</td>
-          </tr>
-        `).join("")}
-      `;
+      const activePill = document.querySelector(".filter-pill.active");
+      const filter = activePill ? activePill.dataset.filter : "all";
+      if (filter === "income") expList = [];
+      if (filter === "expense") incList = [];
+
+      tbody.innerHTML = renderTxTableRows(expList, incList, selectedFinanceMonthYear);
     });
   }
   // Password Vault Handlers
