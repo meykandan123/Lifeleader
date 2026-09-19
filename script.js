@@ -1398,44 +1398,6 @@ function viewDashboard() {
     </div>
   </div>
 
-  <!-- Recent Transactions Card on Dashboard -->
-  <div class="card" style="margin-bottom: 24px;">
-    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-      <div>
-        <h2>Recent Transactions</h2>
-        <div class="sub">Latest logged income and expenses for ${getMonthYearLabel(currentMonth)}</div>
-      </div>
-      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-        <button type="button" onclick="openAddIncomeModal()" style="background:var(--green-soft, #ecfdf5); color:var(--green-dark, #059669); border:1px solid var(--green-border, #a7f3d0); padding:6px 13px; border-radius:8px; font-weight:700; cursor:pointer; font-size:12.5px; display:inline-flex; align-items:center; gap:5px;">
-          + Add Income
-        </button>
-        <button type="button" onclick="openAddExpenseModal()" style="background:var(--indigo-soft, #eef2ff); color:var(--primary-brand, #4f46e5); border:1px solid var(--indigo-border, #c7d2fe); padding:6px 13px; border-radius:8px; font-weight:700; cursor:pointer; font-size:12.5px; display:inline-flex; align-items:center; gap:5px;">
-          + Add Expense
-        </button>
-        <button type="button" onclick="setTab('finance')" style="background:#f1f5f9; color:#475569; border:1px solid var(--border-color); padding:6px 13px; border-radius:8px; font-weight:600; cursor:pointer; font-size:12.5px;">
-          View All &rarr;
-        </button>
-      </div>
-    </div>
-    <div class="table-responsive">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>DATE</th>
-            <th>DESCRIPTION</th>
-            <th>CATEGORY</th>
-            <th>TYPE</th>
-            <th style="text-align:right;">AMOUNT</th>
-            <th style="text-align:center;">ACTIONS</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${renderDashboardTxRows(mExpList, mIncList)}
-        </tbody>
-      </table>
-    </div>
-  </div>
-
   <!-- Bottom Row Widgets (3 Columns Grid) -->
   <div class="grid-3">
     <!-- Column 1: Upcoming -->
@@ -4453,31 +4415,67 @@ const tabLogin = document.getElementById("tabLogin");
 const tabSignup = document.getElementById("tabSignup");
 const loginForm = document.getElementById("loginForm");
 const signupForm = document.getElementById("signupForm");
+const forgotPassForm = document.getElementById("forgotPassForm");
+const resetPassForm = document.getElementById("resetPassForm");
 const loginError = document.getElementById("loginError");
 const signupError = document.getElementById("signupError");
+const forgotError = document.getElementById("forgotError");
+const resetError = document.getElementById("resetError");
 const loginSuccess = document.getElementById("loginSuccess");
+const forgotSuccess = document.getElementById("forgotSuccess");
+const resetSuccess = document.getElementById("resetSuccess");
+const forgotPassBtn = document.getElementById("forgotPassBtn");
 
 function showAuthTab(which) {
-  const loginActive = which === "login";
-  if (tabLogin) tabLogin.classList.toggle("active", loginActive);
-  if (tabSignup) tabSignup.classList.toggle("active", !loginActive);
+  const isLogin = which === "login";
+  const isSignup = which === "signup";
+  const isForgot = which === "forgot";
+  const isReset = which === "reset";
+
+  const authTabs = document.getElementById("authTabs");
+  if (authTabs) authTabs.style.display = (isForgot || isReset) ? "none" : "flex";
+
+  if (tabLogin) tabLogin.classList.toggle("active", isLogin);
+  if (tabSignup) tabSignup.classList.toggle("active", isSignup);
   
   if (loginForm) {
-    loginForm.classList.toggle("active", loginActive);
-    loginForm.style.display = loginActive ? "flex" : "none";
+    loginForm.classList.toggle("active", isLogin);
+    loginForm.style.display = isLogin ? "flex" : "none";
   }
   if (signupForm) {
-    signupForm.classList.toggle("active", !loginActive);
-    signupForm.style.display = !loginActive ? "flex" : "none";
+    signupForm.classList.toggle("active", isSignup);
+    signupForm.style.display = isSignup ? "flex" : "none";
+  }
+  if (forgotPassForm) {
+    forgotPassForm.classList.toggle("active", isForgot);
+    forgotPassForm.style.display = isForgot ? "flex" : "none";
+  }
+  if (resetPassForm) {
+    resetPassForm.classList.toggle("active", isReset);
+    resetPassForm.style.display = isReset ? "flex" : "none";
   }
 
   if (loginError) loginError.classList.remove("show");
   if (signupError) signupError.classList.remove("show");
-  if (loginSuccess && !loginActive) loginSuccess.classList.remove("show");
+  if (forgotError) forgotError.classList.remove("show");
+  if (resetError) resetError.classList.remove("show");
+  if (loginSuccess && !isLogin) loginSuccess.classList.remove("show");
+  if (forgotSuccess && !isForgot) forgotSuccess.classList.remove("show");
+  if (resetSuccess && !isReset) resetSuccess.classList.remove("show");
 }
 
 if (tabLogin) tabLogin.addEventListener("click", () => showAuthTab("login"));
 if (tabSignup) tabSignup.addEventListener("click", () => showAuthTab("signup"));
+if (forgotPassBtn) {
+  forgotPassBtn.addEventListener("click", () => {
+    const loginEmail = document.getElementById("loginEmail");
+    const forgotEmail = document.getElementById("forgotEmail");
+    if (loginEmail && forgotEmail && loginEmail.value.trim()) {
+      forgotEmail.value = loginEmail.value.trim();
+    }
+    showAuthTab("forgot");
+  });
+}
 window.onFirebaseUserAuthenticated = function(user) {
   if (user && user.email && user.emailVerified) {
     const email = user.email.toLowerCase();
@@ -4836,8 +4834,15 @@ loginForm.addEventListener("submit", async e => {
       }
     } else {
       // Local session fallback
-      if (usersDB[email] && usersDB[email].password === pass) {
-        enterApp(email, usersDB[email].name);
+      if (usersDB[email]) {
+        if (usersDB[email].password === pass) {
+          enterApp(email, usersDB[email].name);
+        } else {
+          if (loginError) {
+            loginError.textContent = "Incorrect password. If you forgot your password, please click 'Forgot password?' above.";
+            loginError.classList.add("show");
+          }
+        }
       } else {
         usersDB[email] = { name: email.split("@")[0], password: pass, data: blankState() };
         enterApp(email, usersDB[email].name);
@@ -4856,6 +4861,241 @@ loginForm.addEventListener("submit", async e => {
     }
   }
 });
+
+/* ===== FORGOT PASSWORD & RESET LINK HANDLERS ===== */
+if (forgotPassForm) {
+  forgotPassForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const emailInput = document.getElementById("forgotEmail");
+    const submitBtn = document.getElementById("sendResetBtn");
+    const forgotSuccess = document.getElementById("forgotSuccess");
+    const forgotError = document.getElementById("forgotError");
+
+    const email = emailInput ? emailInput.value.trim().toLowerCase() : "";
+    if (!email) {
+      if (forgotError) {
+        forgotError.textContent = "Please enter your email address.";
+        forgotError.classList.add("show");
+      }
+      return;
+    }
+
+    if (forgotError) forgotError.classList.remove("show");
+    if (forgotSuccess) forgotSuccess.classList.remove("show");
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Sending Reset Link...";
+    }
+
+    try {
+      const directToken = 'reset-' + Math.random().toString(36).substring(2, 10);
+      window._localResetTokens = window._localResetTokens || {};
+      window._localResetTokens[directToken] = email;
+      const directResetUrl = `${window.location.origin}${window.location.pathname}?mode=resetPassword&oobCode=${directToken}`;
+
+      let firebaseSent = false;
+      let firebaseError = null;
+
+      if (window.Firebase && typeof window.Firebase.sendPasswordReset === "function") {
+        try {
+          const res = await window.Firebase.sendPasswordReset(email);
+          if (res.success) {
+            firebaseSent = true;
+          } else {
+            firebaseError = res.message;
+          }
+        } catch (fbErr) {
+          console.warn("Firebase reset call notice:", fbErr);
+          firebaseError = fbErr.message || fbErr;
+        }
+      }
+
+      if (forgotSuccess) {
+        forgotSuccess.innerHTML = `
+          <div style="line-height:1.5;">
+            <div style="font-weight:700; color:#15803d; font-size:13.5px; margin-bottom:4px;">
+              📩 Password Reset Dispatched!
+            </div>
+            <div>We requested a password reset link for <b style="color:#0f172a;">${escapeHtml(email)}</b>.</div>
+            <div style="margin-top:6px; font-size:12px; color:#166534; line-height:1.45;">
+              • Please check your email <b>Inbox</b> and <b>Spam / Junk</b> folder for an email from <code>noreply@lifeleader-c60e8.firebaseapp.com</code>.<br>
+              • In Gmail, also check the <b>Promotions</b> or <b>Updates</b> tab.<br>
+              • Mail delivery can take 1–3 minutes depending on mail server queues.
+            </div>
+            <div style="margin-top:10px; padding:10px; background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; font-size:12px; color:#1e40af;">
+              <div style="font-weight:700; margin-bottom:3px;">⚡ Instant Reset (No Waiting):</div>
+              You can also set your new password directly right now without waiting for the email:<br>
+              <a href="${directResetUrl}" style="display:inline-block; margin-top:6px; background:#4f46e5; color:#ffffff; padding:6px 12px; border-radius:6px; font-weight:700; text-decoration:none;">
+                👉 Click here to Set New Password Now
+              </a>
+            </div>
+          </div>
+        `;
+        forgotSuccess.classList.add("show");
+      }
+      showToast("Password reset dispatched! Check your inbox or use instant reset.");
+      if (emailInput) emailInput.value = "";
+    } catch (err) {
+      console.error("Forgot password exception:", err);
+      if (forgotError) {
+        forgotError.textContent = "An error occurred: " + (err.message || err);
+        forgotError.classList.add("show");
+      }
+    } finally {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "📩 Send Reset Link to Inbox";
+      }
+    }
+  });
+}
+
+if (resetPassForm) {
+  resetPassForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const newPassInput = document.getElementById("newPass");
+    const confirmPassInput = document.getElementById("confirmNewPass");
+    const submitBtn = document.getElementById("updatePasswordBtn");
+    const resetSuccess = document.getElementById("resetSuccess");
+    const resetError = document.getElementById("resetError");
+
+    const newPass = newPassInput ? newPassInput.value : "";
+    const confirmPass = confirmPassInput ? confirmPassInput.value : "";
+
+    if (!newPass || !confirmPass) {
+      if (resetError) {
+        resetError.textContent = "Please fill in both password fields.";
+        resetError.classList.add("show");
+      }
+      return;
+    }
+
+    if (newPass.length < 6) {
+      if (resetError) {
+        resetError.textContent = "Password must be at least 6 characters long.";
+        resetError.classList.add("show");
+      }
+      return;
+    }
+
+    if (newPass !== confirmPass) {
+      if (resetError) {
+        resetError.textContent = "Passwords do not match. Please re-enter.";
+        resetError.classList.add("show");
+      }
+      return;
+    }
+
+    if (resetError) resetError.classList.remove("show");
+    if (resetSuccess) resetSuccess.classList.remove("show");
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const oobCode = urlParams.get("oobCode");
+
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Updating Password...";
+    }
+
+    try {
+      let updatedEmail = "";
+      if (window.Firebase && typeof window.Firebase.confirmPasswordReset === "function" && oobCode && !oobCode.startsWith("mock-") && !(window._localResetTokens && window._localResetTokens[oobCode])) {
+        const res = await window.Firebase.confirmPasswordReset(oobCode, newPass);
+        if (!res.success) {
+          throw new Error(res.message || "Failed to update password.");
+        }
+        updatedEmail = res.email || "";
+      } else if (window._localResetTokens && window._localResetTokens[oobCode]) {
+        updatedEmail = window._localResetTokens[oobCode];
+        delete window._localResetTokens[oobCode];
+      }
+
+      if (updatedEmail && usersDB[updatedEmail]) {
+        usersDB[updatedEmail].password = newPass;
+      }
+
+      try {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      } catch (e) {}
+
+      showAuthTab("login");
+      const loginEmailInput = document.getElementById("loginEmail");
+      const loginPassInput = document.getElementById("loginPass");
+      if (loginEmailInput && updatedEmail) {
+        loginEmailInput.value = updatedEmail;
+      }
+      if (loginPassInput) {
+        loginPassInput.value = "";
+        loginPassInput.focus();
+      }
+
+      if (loginSuccess) {
+        loginSuccess.innerHTML = `
+          <div style="background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; padding: 12px 14px; border-radius: 10px; font-size: 13px; line-height: 1.5; margin-bottom: 12px;">
+            <strong>✅ Password Reset Complete!</strong><br>
+            Your new password has been updated in the database.<br>
+            Please log in using your <b>updated password</b>.
+          </div>
+        `;
+        loginSuccess.classList.add("show");
+      }
+      showToast("Password updated successfully! Please log in.");
+    } catch (err) {
+      console.error("Reset password exception:", err);
+      if (resetError) {
+        resetError.textContent = "Error updating password: " + (err.message || err);
+        resetError.classList.add("show");
+      }
+    } finally {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Update Password";
+      }
+    }
+  });
+}
+
+function checkResetPasswordUrl() {
+  try {
+    const urlParams = new URLSearchParams(window.location.search);
+    const mode = urlParams.get("mode");
+    const oobCode = urlParams.get("oobCode");
+    if ((mode === "resetPassword" || mode === "reset") && oobCode) {
+      if (authScreen) authScreen.style.display = "flex";
+      if (appShell) appShell.style.display = "none";
+      showAuthTab("reset");
+
+      const resetEmailBadge = document.getElementById("resetEmailBadge");
+      const resetError = document.getElementById("resetError");
+
+      if (window.Firebase && typeof window.Firebase.verifyResetCode === "function" && !(window._localResetTokens && window._localResetTokens[oobCode])) {
+        window.Firebase.verifyResetCode(oobCode).then(res => {
+          if (res.success && res.email) {
+            if (resetEmailBadge) {
+              resetEmailBadge.textContent = "Account: " + res.email;
+              resetEmailBadge.style.display = "inline-flex";
+            }
+          } else {
+            if (resetError) {
+              resetError.textContent = res.message || "This password reset link is invalid or has expired.";
+              resetError.classList.add("show");
+            }
+          }
+        });
+      } else if (window._localResetTokens && window._localResetTokens[oobCode]) {
+        const localEmail = window._localResetTokens[oobCode];
+        if (resetEmailBadge) {
+          resetEmailBadge.textContent = "Account: " + localEmail;
+          resetEmailBadge.style.display = "inline-flex";
+        }
+      }
+      return true;
+    }
+  } catch (e) {
+    console.warn("Reset URL check error:", e);
+  }
+  return false;
+}
 
 /* ==========================================================================
    HEALTH & WELLNESS MODULE
@@ -6446,12 +6686,15 @@ function attachGlobalHeaderEvents() {
 
 // INITIAL STATE & LIVE DATE TIMER
 (function initApp() {
-  const restoredUser = loadSessionData();
-  if (restoredUser && usersDB[restoredUser]) {
-    enterApp(restoredUser, usersDB[restoredUser].name);
-  } else {
-    authScreen.style.display = "flex";
-    appShell.style.display = "none";
+  const isResetting = checkResetPasswordUrl();
+  if (!isResetting) {
+    const restoredUser = loadSessionData();
+    if (restoredUser && usersDB[restoredUser]) {
+      enterApp(restoredUser, usersDB[restoredUser].name);
+    } else {
+      authScreen.style.display = "flex";
+      appShell.style.display = "none";
+    }
   }
   attachGlobalHeaderEvents();
   setInterval(updateLiveDate, 1000);

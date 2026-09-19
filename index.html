@@ -23,11 +23,15 @@
       createUserWithEmailAndPassword,
       signInWithEmailAndPassword,
       sendEmailVerification,
+      sendPasswordResetEmail,
+      confirmPasswordReset,
+      verifyPasswordResetCode,
       updateProfile,
       signOut,
       onAuthStateChanged
     } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
     import {
+      initializeFirestore,
       getFirestore,
       doc,
       setDoc,
@@ -60,7 +64,16 @@
       console.warn("Firebase Analytics warning:", err);
     }
     const auth = getAuth(app);
-    const db = getFirestore(app);
+    let db = null;
+    try {
+      // Force HTTP long-polling to prevent QUIC_PROTOCOL_ERROR and HTTP2_PING_FAILED
+      db = initializeFirestore(app, {
+        experimentalForceLongPolling: true,
+        useFetchStreams: false
+      });
+    } catch (e) {
+      try { db = getFirestore(app); } catch (err) { console.warn("Firestore init notice:", err); }
+    }
 
     let activeUnsubscribe = null;
 
@@ -147,6 +160,79 @@
         }
       },
 
+      // Firebase Auth: Send password reset link to user's email inbox
+      sendPasswordReset: async (email) => {
+        try {
+          const normEmail = String(email || '').trim().toLowerCase();
+          if (!normEmail) {
+            return { success: false, message: "Please enter your email address." };
+          }
+          // Send official reset email using Firebase standard verified action URL
+          await sendPasswordResetEmail(auth, normEmail);
+          return {
+            success: true,
+            email: normEmail,
+            message: "Password reset link has been sent to your email inbox! Please check your inbox and spam folder."
+          };
+        } catch (error) {
+          console.error("Firebase Password Reset Error:", error);
+          let message = error.message || "Failed to send password reset email.";
+          if (error.code === "auth/user-not-found") {
+            message = "No account found with this email address. Please check your email or sign up.";
+          } else if (error.code === "auth/invalid-email") {
+            message = "Please enter a valid email address.";
+          } else if (error.code === "auth/too-many-requests") {
+            message = "Too many attempts. Please wait a few moments before trying again.";
+          }
+          return { success: false, message, code: error.code };
+        }
+      },
+
+      // Firebase Auth: Verify password reset oobCode
+      verifyResetCode: async (code) => {
+        try {
+          const email = await verifyPasswordResetCode(auth, code);
+          return { success: true, email };
+        } catch (error) {
+          console.error("Firebase Verify Code Error:", error);
+          let message = "Invalid or expired password reset link.";
+          if (error.code === "auth/expired-action-code") {
+            message = "This password reset link has expired. Please request a new one.";
+          } else if (error.code === "auth/invalid-action-code") {
+            message = "This password reset link is invalid or has already been used.";
+          }
+          return { success: false, message, code: error.code };
+        }
+      },
+
+      // Firebase Auth: Confirm password reset and update Firestore record
+      confirmPasswordReset: async (code, newPassword) => {
+        try {
+          const email = await verifyPasswordResetCode(auth, code);
+          await confirmPasswordReset(auth, code, newPassword);
+
+          if (email) {
+            const cleanId = getCleanDocId(email);
+            await setDoc(doc(db, "users", cleanId), {
+              passwordUpdatedAt: new Date().toISOString()
+            }, { merge: true });
+          }
+
+          return { success: true, email };
+        } catch (error) {
+          console.error("Firebase Confirm Password Reset Error:", error);
+          let message = error.message || "Failed to update password.";
+          if (error.code === "auth/weak-password") {
+            message = "Password should be at least 6 characters long.";
+          } else if (error.code === "auth/expired-action-code") {
+            message = "This reset link has expired. Please request a new reset link.";
+          } else if (error.code === "auth/invalid-action-code") {
+            message = "This reset link is invalid or has already been used.";
+          }
+          return { success: false, message, code: error.code };
+        }
+      },
+
       // Log analytics events
       logEvent: (eventName, params) => {
         if (analytics) {
@@ -200,11 +286,11 @@
               }
             }
           }, (error) => {
-            console.warn("❌ [NoSQL Firestore Realtime] Subscription error:", error);
+            console.debug("Firestore live sync notice (handled):", error.code || error.message);
           });
           return activeUnsubscribe;
         } catch (err) {
-          console.warn("❌ [NoSQL Firestore Realtime] Setup error:", err);
+          console.debug("Firestore setup notice (handled):", err);
         }
         return null;
       },
@@ -268,7 +354,7 @@
         <h1>LifeLedger AI</h1>
         <div class="tagline">Your intelligent life dashboard</div>
       </div>
-      <div class="auth-tabs">
+      <div class="auth-tabs" id="authTabs">
         <button type="button" id="tabLogin" class="active" onclick="showAuthTab('login')">Log in</button>
         <button type="button" id="tabSignup" onclick="showAuthTab('signup')">Sign up</button>
       </div>
@@ -282,6 +368,9 @@
         <div>
           <label for="loginPass">Password</label>
           <input type="password" id="loginPass" autocomplete="current-password" placeholder="••••••••" required>
+          <div class="auth-forgot-row">
+            <button type="button" id="forgotPassBtn" class="forgot-pass-btn">Forgot password?</button>
+          </div>
         </div>
         <div class="auth-error" id="loginError"></div>
         <button type="submit">Log in</button>
@@ -302,6 +391,43 @@
         </div>
         <div class="auth-error" id="signupError"></div>
         <button type="submit">Create account</button>
+      </form>
+
+      <!-- Forgot Password Form -->
+      <form id="forgotPassForm" class="auth-form" style="display: none;">
+        <div class="auth-form-header">
+          <h3>Reset Password</h3>
+          <p>Enter your registered email address and we will send a password reset link to your email inbox.</p>
+        </div>
+        <div class="auth-success" id="forgotSuccess"></div>
+        <div>
+          <label for="forgotEmail">Email</label>
+          <input type="email" id="forgotEmail" autocomplete="email" placeholder="name@example.com" required>
+        </div>
+        <div class="auth-error" id="forgotError"></div>
+        <button type="submit" id="sendResetBtn">📩 Send Reset Link to Inbox</button>
+        <button type="button" class="auth-secondary-btn" onclick="showAuthTab('login')">← Back to Log in</button>
+      </form>
+
+      <!-- In-App Set New Password Form (when opened from reset link) -->
+      <form id="resetPassForm" class="auth-form" style="display: none;">
+        <div class="auth-form-header">
+          <h3>Set New Password</h3>
+          <p>Enter your new password below. Make sure it's at least 6 characters long.</p>
+          <div id="resetEmailBadge" class="reset-email-badge" style="display:none;"></div>
+        </div>
+        <div class="auth-success" id="resetSuccess"></div>
+        <div>
+          <label for="newPass">New Password</label>
+          <input type="password" id="newPass" autocomplete="new-password" placeholder="••••••••" minlength="6" required>
+        </div>
+        <div>
+          <label for="confirmNewPass">Confirm New Password</label>
+          <input type="password" id="confirmNewPass" autocomplete="new-password" placeholder="••••••••" minlength="6" required>
+        </div>
+        <div class="auth-error" id="resetError"></div>
+        <button type="submit" id="updatePasswordBtn">Update Password</button>
+        <button type="button" class="auth-secondary-btn" onclick="showAuthTab('login')">← Back to Log in</button>
       </form>
 
       <div class="auth-hint">Your session lives securely in your browser. Start fresh with real-time AI tracking!</div>
