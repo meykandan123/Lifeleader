@@ -4888,57 +4888,35 @@ if (forgotPassForm) {
     }
 
     try {
-      const directToken = 'reset-' + Math.random().toString(36).substring(2, 10);
-      window._localResetTokens = window._localResetTokens || {};
-      window._localResetTokens[directToken] = email;
-      const directResetUrl = `${window.location.origin}${window.location.pathname}?mode=resetPassword&oobCode=${directToken}`;
-
-      let firebaseSent = false;
-      let firebaseError = null;
-
       if (window.Firebase && typeof window.Firebase.sendPasswordReset === "function") {
-        try {
-          const res = await window.Firebase.sendPasswordReset(email);
-          if (res.success) {
-            firebaseSent = true;
-          } else {
-            firebaseError = res.message;
-          }
-        } catch (fbErr) {
-          console.warn("Firebase reset call notice:", fbErr);
-          firebaseError = fbErr.message || fbErr;
+        const res = await window.Firebase.sendPasswordReset(email);
+        if (!res.success) {
+          throw new Error(res.message || "Failed to send reset email.");
         }
       }
 
       if (forgotSuccess) {
         forgotSuccess.innerHTML = `
           <div style="line-height:1.5;">
-            <div style="font-weight:700; color:#15803d; font-size:13.5px; margin-bottom:4px;">
-              📩 Password Reset Dispatched!
+            <div style="font-weight:700; color:#15803d; font-size:13.5px; margin-bottom:6px;">
+              📩 Password Reset Link Sent to Inbox!
             </div>
-            <div>We requested a password reset link for <b style="color:#0f172a;">${escapeHtml(email)}</b>.</div>
-            <div style="margin-top:6px; font-size:12px; color:#166534; line-height:1.45;">
-              • Please check your email <b>Inbox</b> and <b>Spam / Junk</b> folder for an email from <code>noreply@lifeleader-c60e8.firebaseapp.com</code>.<br>
-              • In Gmail, also check the <b>Promotions</b> or <b>Updates</b> tab.<br>
-              • Mail delivery can take 1–3 minutes depending on mail server queues.
-            </div>
-            <div style="margin-top:10px; padding:10px; background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; font-size:12px; color:#1e40af;">
-              <div style="font-weight:700; margin-bottom:3px;">⚡ Instant Reset (No Waiting):</div>
-              You can also set your new password directly right now without waiting for the email:<br>
-              <a href="${directResetUrl}" style="display:inline-block; margin-top:6px; background:#4f46e5; color:#ffffff; padding:6px 12px; border-radius:6px; font-weight:700; text-decoration:none;">
-                👉 Click here to Set New Password Now
-              </a>
+            <div>We have sent a secure password reset link to <b style="color:#0f172a;">${escapeHtml(email)}</b>.</div>
+            <div style="margin-top:8px; font-size:12px; color:#166534; line-height:1.5;">
+              • Please open your email <b>Inbox</b> and click the reset link to change your password.<br>
+              • If you do not see it within a minute, please check your <b>Spam / Junk</b> folder or Gmail <b>Promotions</b> tab.<br>
+              • Sender: <code>noreply@lifeleader-c60e8.firebaseapp.com</code>
             </div>
           </div>
         `;
         forgotSuccess.classList.add("show");
       }
-      showToast("Password reset dispatched! Check your inbox or use instant reset.");
+      showToast("Password reset link sent! Check your inbox or spam folder.");
       if (emailInput) emailInput.value = "";
     } catch (err) {
       console.error("Forgot password exception:", err);
       if (forgotError) {
-        forgotError.textContent = "An error occurred: " + (err.message || err);
+        forgotError.textContent = err.message || "Failed to send password reset link. Please verify your email.";
         forgotError.classList.add("show");
       }
     } finally {
