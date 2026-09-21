@@ -79,6 +79,68 @@
 
     const getCleanDocId = (id) => String(id || '').trim().toLowerCase().replace(/[^a-zA-Z0-9_-]/g, "_");
 
+    // Deep sanitize data to prevent Firestore "Property contains an invalid nested entity" errors
+    function sanitizeForFirestore(val, aggressivePrune = false, depth = 0) {
+      if (val === null || val === undefined) return null;
+      if (typeof val === 'number') {
+        if (isNaN(val) || !isFinite(val)) return 0;
+        return val;
+      }
+      if (typeof val === 'string') {
+        if (aggressivePrune && val.startsWith('data:') && val.length > 5000) {
+          return ''; // Strip base64 file data in aggressive fallback
+        }
+        if (val.length > 750000) {
+          return val.slice(0, 750000); // Guard against Firestore 1MB property limit
+        }
+        return val;
+      }
+      if (typeof val === 'boolean') return val;
+
+      if (Array.isArray(val)) {
+        return val.map(item => {
+          // Flatten/wrap direct nested arrays: [ [...] ]
+          if (Array.isArray(item)) {
+            return { items: sanitizeForFirestore(item, aggressivePrune, depth + 1) };
+          }
+          return sanitizeForFirestore(item, aggressivePrune, depth + 1);
+        });
+      }
+
+      if (typeof val === 'object') {
+        const cleanObj = {};
+        for (const [k, v] of Object.entries(val)) {
+          // Reject empty or whitespace-only keys (causes Firestore "contains an invalid nested entity")
+          const cleanKey = String(k || '').trim();
+          if (!cleanKey) continue;
+          if (v === undefined || typeof v === 'function' || typeof v === 'symbol') continue;
+          if (aggressivePrune && (cleanKey === 'fileData' || cleanKey === 'pdfData' || cleanKey === 'documentFile')) {
+            cleanObj[cleanKey] = '';
+            continue;
+          }
+          cleanObj[cleanKey] = sanitizeForFirestore(v, aggressivePrune, depth + 1);
+        }
+        return cleanObj;
+      }
+
+      return null;
+    }
+
+    function prepareFirestoreData(data, forcePrune = false) {
+      let clean = sanitizeForFirestore(data, forcePrune);
+      try {
+        const jsonStr = JSON.stringify(clean);
+        // If whole payload exceeds 800KB, prune large file attachments to keep document within Firestore 1MB quota
+        if (jsonStr && jsonStr.length > 800000) {
+          console.warn("⚠️ Cloud state size (" + Math.round(jsonStr.length / 1024) + " KB) exceeds safe document threshold. Pruning large file data for cloud persistence.");
+          clean = sanitizeForFirestore(data, true);
+        }
+      } catch (e) {
+        console.warn("Notice checking payload size:", e);
+      }
+      return clean;
+    }
+
     // Expose full Firebase NoSQL & Auth Interface to global scope
     window.Firebase = {
       app,
@@ -243,15 +305,26 @@
       // Save/Sync complete user document state in NoSQL Firestore
       syncUserDataToCloud: async (userId, data) => {
         if (!userId || !db) return;
+        const cleanId = getCleanDocId(userId);
         try {
-          const cleanId = getCleanDocId(userId);
+          const prepared = prepareFirestoreData(data, false);
           await setDoc(doc(db, "users", cleanId), {
             updatedAt: new Date().toISOString(),
-            data: JSON.parse(JSON.stringify(data))
+            data: prepared
           }, { merge: true });
           console.log("⚡ [NoSQL Firestore Multi-Device] Synced user state to collection('users').doc('" + cleanId + "')");
         } catch (err) {
-          console.warn("❌ [NoSQL Firestore] Sync error:", err);
+          console.warn("⚠️ [NoSQL Firestore] Primary sync notice, running sanitized fallback sync:", err.message || err);
+          try {
+            const fallbackPrepared = prepareFirestoreData(data, true);
+            await setDoc(doc(db, "users", cleanId), {
+              updatedAt: new Date().toISOString(),
+              data: fallbackPrepared
+            }, { merge: true });
+            console.log("⚡ [NoSQL Firestore Multi-Device] Fallback sync succeeded for:", cleanId);
+          } catch (fallbackErr) {
+            console.debug("Firestore sync notice (handled):", fallbackErr.message || fallbackErr);
+          }
         }
       },
 

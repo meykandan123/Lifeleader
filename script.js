@@ -2073,6 +2073,11 @@ function handleAddBillPdfSelect(e) {
     e.target.value = "";
     return;
   }
+  if (file.size > 800 * 1024) {
+    showToast("⚠️ Bill PDF exceeds 800 KB limit for cloud invoice sync. Please select a smaller PDF.");
+    e.target.value = "";
+    return;
+  }
   const reader = new FileReader();
   reader.onload = function(evt) {
     pendingAddBillPdf = {
@@ -2100,6 +2105,11 @@ function handleEditBillPdfSelect(e) {
   if (!file) return;
   if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
     showToast("Please select a valid PDF file.");
+    e.target.value = "";
+    return;
+  }
+  if (file.size > 800 * 1024) {
+    showToast("⚠️ Bill PDF exceeds 800 KB limit for cloud invoice sync. Please select a smaller PDF.");
     e.target.value = "";
     return;
   }
@@ -4078,6 +4088,13 @@ function attachHandlers() {
     $("docFileInput").addEventListener("change", e => {
       const file = e.target.files[0];
       if (file) {
+        if (file.size > 800 * 1024) {
+          showToast("⚠️ Document exceeds 800 KB limit for cloud sync. Please select a smaller file.");
+          e.target.value = "";
+          selectedDocFile = null;
+          if ($("docFileLabel")) $("docFileLabel").textContent = "Choose File...";
+          return;
+        }
         selectedDocFile = file;
         if ($("docFileLabel")) $("docFileLabel").textContent = file.name;
       }
@@ -5326,6 +5343,10 @@ function addHealthRecord() {
   };
 
   if (file) {
+    if (file.size > 800 * 1024) {
+      showToast("⚠️ Health attachment exceeds 800 KB limit for cloud sync. Please select a smaller file.");
+      return;
+    }
     const reader = new FileReader();
     reader.onload = e => { newRec.fileData = e.target.result; finishSave(); };
     reader.readAsDataURL(file);
@@ -6196,6 +6217,14 @@ function handleIdPdfSelect(input) {
     const file = input.files[0];
     if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
       showToast("Please upload a PDF document (.pdf)");
+      input.value = "";
+      selectedIdPdfFile = null;
+      const label = document.getElementById("idFileLabel");
+      if (label) label.textContent = "Choose PDF Document...";
+      return;
+    }
+    if (file.size > 800 * 1024) {
+      showToast("⚠️ PDF exceeds 800 KB limit for cloud document sync. Please select a smaller PDF.");
       input.value = "";
       selectedIdPdfFile = null;
       const label = document.getElementById("idFileLabel");
