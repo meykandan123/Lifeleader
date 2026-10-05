@@ -14,14 +14,63 @@
     rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 
+  <!-- Global Error & Browser Extension Noise Interceptor -->
+  <script>
+    (function() {
+      window.__firestoreBlocked = false;
+
+      function isMutedNoise(str) {
+        if (!str) return false;
+        var s = String(str).toLowerCase();
+        return s.includes('chrome-extension://') ||
+               s.includes('colors_css_updater') ||
+               s.includes('err_blocked_by_client') ||
+               s.includes('blocked_by_client') ||
+               s.includes('net::err_failed') ||
+               s.includes('err_failed') ||
+               s.includes('webchannel_connection') ||
+               s.includes('firestore.googleapis.com');
+      }
+
+      window.addEventListener('error', function(event) {
+        if (!event) return;
+        var msg = String(event.message || '');
+        var src = String(event.filename || (event.target && (event.target.src || event.target.href)) || '');
+        if (isMutedNoise(msg) || isMutedNoise(src)) {
+          if (src.includes('firestore') || msg.includes('blocked') || msg.includes('client')) {
+            window.__firestoreBlocked = true;
+          }
+          event.stopImmediatePropagation();
+          if (typeof event.preventDefault === 'function') event.preventDefault();
+          return true;
+        }
+      }, true);
+
+      window.addEventListener('unhandledrejection', function(event) {
+        if (!event) return;
+        var reason = event.reason;
+        var str = String(reason && (reason.message || reason.stack || reason) || '');
+        if (isMutedNoise(str)) {
+          if (str.includes('firestore') || str.includes('blocked') || str.includes('client')) {
+            window.__firestoreBlocked = true;
+          }
+          event.stopImmediatePropagation();
+          if (typeof event.preventDefault === 'function') event.preventDefault();
+          return true;
+        }
+      });
+    })();
+  </script>
+
   <!-- Firebase JS SDK & NoSQL Cloud Firestore Integration -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getAnalytics, logEvent } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-analytics.js";
+    import { getAnalytics, logEvent, isSupported } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-analytics.js";
     import {
       getAuth,
       createUserWithEmailAndPassword,
       signInWithEmailAndPassword,
+      fetchSignInMethodsForEmail,
       sendEmailVerification,
       sendPasswordResetEmail,
       confirmPasswordReset,
@@ -33,6 +82,8 @@
     import {
       initializeFirestore,
       getFirestore,
+      disableNetwork,
+      setLogLevel,
       doc,
       setDoc,
       getDoc,
@@ -58,22 +109,44 @@
     // Initialize Firebase App & NoSQL Cloud Firestore
     const app = initializeApp(firebaseConfig);
     let analytics = null;
-    try {
-      analytics = getAnalytics(app);
-    } catch (err) {
-      console.warn("Firebase Analytics warning:", err);
+    if (typeof window !== "undefined" && typeof navigator !== "undefined" && navigator.onLine) {
+      isSupported().then(supported => {
+        if (supported && navigator.onLine) {
+          try { analytics = getAnalytics(app); } catch (e) {}
+        }
+      }).catch(() => {});
     }
+
     const auth = getAuth(app);
     let db = null;
+    let firestoreBlocked = window.__firestoreBlocked || false;
+
+    function markFirestoreBlocked(reason) {
+      if (firestoreBlocked) return;
+      firestoreBlocked = true;
+      window.__firestoreBlocked = true;
+      console.debug("Firestore client gracefully operating in local vault mode:", reason);
+      if (db) {
+        try { disableNetwork(db).catch(() => {}); } catch (e) {}
+      }
+    }
+
     try {
-      // Force HTTP long-polling to prevent QUIC_PROTOCOL_ERROR and HTTP2_PING_FAILED
       db = initializeFirestore(app, {
-        experimentalForceLongPolling: true,
-        useFetchStreams: false
+        experimentalForceLongPolling: true
       });
     } catch (e) {
-      try { db = getFirestore(app); } catch (err) { console.warn("Firestore init notice:", err); }
+      try {
+        db = getFirestore(app);
+      } catch (err) {
+        console.debug("Firestore init notice:", err);
+      }
     }
+
+    // Suppress internal Firestore offline & timeout logger warnings
+    try {
+      setLogLevel('silent');
+    } catch (e) {}
 
     let activeUnsubscribe = null;
 
@@ -172,15 +245,20 @@
 
           return { success: true, user };
         } catch (error) {
-          console.error("Firebase SignUp Error:", error);
+          if (error.code === "auth/email-already-in-use" || error.code === "auth/weak-password" || error.code === "auth/invalid-email") {
+            console.debug("Firebase SignUp validation handled:", error.code);
+          } else {
+            console.warn("Firebase SignUp Notice:", error.message || error);
+          }
           return { success: false, message: error.message, code: error.code };
         }
       },
 
       // Firebase Auth: Sign in user & enforce email verification check
       signInWithEmail: async (email, password) => {
+        const normEmail = String(email || '').trim().toLowerCase();
         try {
-          const userCredential = await signInWithEmailAndPassword(auth, email, password);
+          const userCredential = await signInWithEmailAndPassword(auth, normEmail, password);
           const user = userCredential.user;
 
           await user.reload();
@@ -195,7 +273,7 @@
             };
           }
 
-          const cleanId = getCleanDocId(email);
+          const cleanId = getCleanDocId(normEmail);
           await setDoc(doc(db, "users", cleanId), {
             uid: user.uid,
             emailVerified: true,
@@ -204,9 +282,87 @@
 
           return { success: true, user };
         } catch (error) {
-          console.error("Firebase SignIn Error:", error);
-          return { success: false, message: error.message, code: error.code };
+          if (error.code === "auth/invalid-credential" || error.code === "auth/user-not-found" || error.code === "auth/wrong-password" || error.code === "auth/invalid-email" || error.code === "auth/network-request-failed") {
+            console.debug("Firebase SignIn handled validation:", error.code);
+          } else {
+            console.debug("Firebase SignIn Notice:", error.message || error);
+          }
+
+          if (error.code === "auth/network-request-failed" || (typeof navigator !== "undefined" && !navigator.onLine)) {
+            return {
+              success: false,
+              message: "Network connection offline or unreachable. Please check your internet connection.",
+              code: "auth/network-request-failed",
+              errorType: "network_error"
+            };
+          }
+
+          let errorType = "other";
+          if (error.code === "auth/invalid-email") {
+            errorType = "wrong_email";
+          } else if (error.code === "auth/wrong-password") {
+            errorType = "wrong_password";
+          } else if (error.code === "auth/user-not-found") {
+            errorType = "not_signed_up";
+          } else if (error.code === "auth/invalid-credential") {
+            let accountFound = false;
+            // 1. Check via fetchSignInMethodsForEmail
+            if (typeof navigator === "undefined" || navigator.onLine) {
+              try {
+                const methods = await fetchSignInMethodsForEmail(auth, normEmail);
+                if (Array.isArray(methods) && methods.length > 0) {
+                  accountFound = true;
+                }
+              } catch (e) {
+                console.debug("Check sign-in methods notice:", e.code || e.message);
+              }
+
+              // 2. Check via Firestore users document
+              if (!accountFound && db) {
+                try {
+                  const cleanId = getCleanDocId(normEmail);
+                  const snap = await getDoc(doc(db, "users", cleanId));
+                  if (snap && snap.exists()) {
+                    accountFound = true;
+                  }
+                } catch (e) {
+                  console.debug("Check Firestore user doc notice:", e.code || e.message);
+                }
+              }
+            }
+
+            // 3. Check local usersDB if available
+            if (!accountFound && typeof usersDB !== "undefined" && usersDB[normEmail]) {
+              accountFound = true;
+            }
+
+            errorType = accountFound ? "wrong_password" : "not_signed_up";
+          }
+
+          return {
+            success: false,
+            message: error.message,
+            code: error.code,
+            errorType: errorType
+          };
         }
+      },
+
+      checkIfAccountExists: async (email) => {
+        const normEmail = String(email || '').trim().toLowerCase();
+        if (!normEmail) return false;
+        try {
+          const methods = await fetchSignInMethodsForEmail(auth, normEmail);
+          if (Array.isArray(methods) && methods.length > 0) return true;
+        } catch (e) {}
+        try {
+          if (db) {
+            const snap = await getDoc(doc(db, "users", getCleanDocId(normEmail)));
+            if (snap && snap.exists()) return true;
+          }
+        } catch (e) {}
+        if (typeof usersDB !== "undefined" && usersDB[normEmail]) return true;
+        return false;
       },
 
       // Firebase Auth: Resend email verification link
@@ -237,7 +393,11 @@
             message: "Password reset link has been sent to your email inbox! Please check your inbox and spam folder."
           };
         } catch (error) {
-          console.error("Firebase Password Reset Error:", error);
+          if (error.code === "auth/user-not-found" || error.code === "auth/invalid-email") {
+            console.debug("Firebase Password Reset validation handled:", error.code);
+          } else {
+            console.warn("Firebase Password Reset Notice:", error.message || error);
+          }
           let message = error.message || "Failed to send password reset email.";
           if (error.code === "auth/user-not-found") {
             message = "No account found with this email address. Please check your email or sign up.";
@@ -256,7 +416,11 @@
           const email = await verifyPasswordResetCode(auth, code);
           return { success: true, email };
         } catch (error) {
-          console.error("Firebase Verify Code Error:", error);
+          if (error.code === "auth/expired-action-code" || error.code === "auth/invalid-action-code") {
+            console.debug("Firebase Verify Code validation handled:", error.code);
+          } else {
+            console.warn("Firebase Verify Code Notice:", error.message || error);
+          }
           let message = "Invalid or expired password reset link.";
           if (error.code === "auth/expired-action-code") {
             message = "This password reset link has expired. Please request a new one.";
@@ -282,7 +446,11 @@
 
           return { success: true, email };
         } catch (error) {
-          console.error("Firebase Confirm Password Reset Error:", error);
+          if (error.code === "auth/weak-password" || error.code === "auth/expired-action-code" || error.code === "auth/invalid-action-code") {
+            console.debug("Firebase Confirm Password Reset validation handled:", error.code);
+          } else {
+            console.warn("Firebase Confirm Password Reset Notice:", error.message || error);
+          }
           let message = error.message || "Failed to update password.";
           if (error.code === "auth/weak-password") {
             message = "Password should be at least 6 characters long.";
@@ -304,7 +472,11 @@
 
       // Save/Sync complete user document state in NoSQL Firestore
       syncUserDataToCloud: async (userId, data) => {
-        if (!userId || !db) return;
+        if (!userId || !db || firestoreBlocked || window.__firestoreBlocked) return;
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          console.debug("Offline mode active: Skipping cloud sync, cached locally.");
+          return;
+        }
         const cleanId = getCleanDocId(userId);
         try {
           const prepared = prepareFirestoreData(data, false);
@@ -314,7 +486,12 @@
           }, { merge: true });
           console.log("⚡ [NoSQL Firestore Multi-Device] Synced user state to collection('users').doc('" + cleanId + "')");
         } catch (err) {
-          console.warn("⚠️ [NoSQL Firestore] Primary sync notice, running sanitized fallback sync:", err.message || err);
+          const errStr = String(err && (err.message || err.code || err) || '');
+          if (errStr.includes("BLOCKED") || errStr.includes("unavailable") || errStr.includes("offline") || err.code === "unavailable") {
+            markFirestoreBlocked(errStr);
+            return;
+          }
+          console.debug("⚠️ [NoSQL Firestore] Primary sync notice, running sanitized fallback sync:", err.message || err);
           try {
             const fallbackPrepared = prepareFirestoreData(data, true);
             await setDoc(doc(db, "users", cleanId), {
@@ -323,14 +500,23 @@
             }, { merge: true });
             console.log("⚡ [NoSQL Firestore Multi-Device] Fallback sync succeeded for:", cleanId);
           } catch (fallbackErr) {
-            console.debug("Firestore sync notice (handled):", fallbackErr.message || fallbackErr);
+            const fbStr = String(fallbackErr && (fallbackErr.message || fallbackErr.code || fallbackErr) || '');
+            if (fbStr.includes("BLOCKED") || fbStr.includes("unavailable") || fbStr.includes("offline")) {
+              markFirestoreBlocked(fbStr);
+            } else {
+              console.debug("Firestore sync notice (handled):", fallbackErr.message || fallbackErr);
+            }
           }
         }
       },
 
       // One-time fetch of user document from NoSQL Firestore
       fetchUserDataFromCloud: async (userId) => {
-        if (!userId || !db) return null;
+        if (!userId || !db || firestoreBlocked || window.__firestoreBlocked) return null;
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          console.debug("Offline mode active: Skipping cloud fetch, using local session state.");
+          return null;
+        }
         try {
           const cleanId = getCleanDocId(userId);
           const snap = await getDoc(doc(db, "users", cleanId));
@@ -339,14 +525,20 @@
             return snap.data().data;
           }
         } catch (err) {
-          console.warn("❌ [NoSQL Firestore] Fetch error:", err);
+          const errStr = String(err && (err.message || err.code || err) || '');
+          if (errStr.includes("BLOCKED") || errStr.includes("unavailable") || errStr.includes("offline") || err.code === "unavailable") {
+            markFirestoreBlocked(errStr);
+          } else {
+            console.debug("Firestore fetch notice (handled):", err.message || err);
+          }
         }
         return null;
       },
 
       // Real-time listener for NoSQL document updates across devices
       subscribeToCloudData: (userId, onUpdateCallback) => {
-        if (!userId || !db) return null;
+        if (!userId || !db || firestoreBlocked || window.__firestoreBlocked) return null;
+        if (typeof navigator !== 'undefined' && !navigator.onLine) return null;
         const cleanId = getCleanDocId(userId);
         if (activeUnsubscribe) activeUnsubscribe();
 
@@ -359,7 +551,12 @@
               }
             }
           }, (error) => {
-            console.debug("Firestore live sync notice (handled):", error.code || error.message);
+            const errStr = String(error && (error.code || error.message) || '');
+            if (errStr.includes("BLOCKED") || errStr.includes("unavailable") || errStr.includes("offline")) {
+              markFirestoreBlocked(errStr);
+            } else {
+              console.debug("Firestore live sync notice (handled):", error.code || error.message);
+            }
           });
           return activeUnsubscribe;
         } catch (err) {
@@ -436,11 +633,11 @@
         <div class="auth-success" id="loginSuccess"></div>
         <div>
           <label for="loginEmail">Email</label>
-          <input type="email" id="loginEmail" autocomplete="email" placeholder="name@example.com" required>
+          <input aria-label="name@example.com"  type="email" id="loginEmail" autocomplete="email" placeholder="name@example.com" required>
         </div>
         <div>
           <label for="loginPass">Password</label>
-          <input type="password" id="loginPass" autocomplete="current-password" placeholder="••••••••" required>
+          <input aria-label="••••••••"  type="password" id="loginPass" autocomplete="current-password" placeholder="••••••••" required>
           <div class="auth-forgot-row">
             <button type="button" id="forgotPassBtn" class="forgot-pass-btn">Forgot password?</button>
           </div>
@@ -452,15 +649,15 @@
       <form id="signupForm" class="auth-form">
         <div>
           <label for="signupName">Your name</label>
-          <input type="text" id="signupName" autocomplete="name" placeholder="John Doe" required>
+          <input aria-label="John Doe"  type="text" id="signupName" autocomplete="name" placeholder="John Doe" required>
         </div>
         <div>
           <label for="signupEmail">Email</label>
-          <input type="email" id="signupEmail" autocomplete="email" placeholder="name@example.com" required>
+          <input aria-label="name@example.com"  type="email" id="signupEmail" autocomplete="email" placeholder="name@example.com" required>
         </div>
         <div>
           <label for="signupPass">Choose a password</label>
-          <input type="password" id="signupPass" autocomplete="new-password" placeholder="••••••••" required>
+          <input aria-label="••••••••"  type="password" id="signupPass" autocomplete="new-password" placeholder="••••••••" required>
         </div>
         <div class="auth-error" id="signupError"></div>
         <button type="submit">Create account</button>
@@ -475,7 +672,7 @@
         <div class="auth-success" id="forgotSuccess"></div>
         <div>
           <label for="forgotEmail">Email</label>
-          <input type="email" id="forgotEmail" autocomplete="email" placeholder="name@example.com" required>
+          <input aria-label="name@example.com"  type="email" id="forgotEmail" autocomplete="email" placeholder="name@example.com" required>
         </div>
         <div class="auth-error" id="forgotError"></div>
         <button type="submit" id="sendResetBtn">📩 Send Reset Link to Inbox</button>
@@ -492,11 +689,11 @@
         <div class="auth-success" id="resetSuccess"></div>
         <div>
           <label for="newPass">New Password</label>
-          <input type="password" id="newPass" autocomplete="new-password" placeholder="••••••••" minlength="6" required>
+          <input aria-label="••••••••"  type="password" id="newPass" autocomplete="new-password" placeholder="••••••••" minlength="6" required>
         </div>
         <div>
           <label for="confirmNewPass">Confirm New Password</label>
-          <input type="password" id="confirmNewPass" autocomplete="new-password" placeholder="••••••••" minlength="6" required>
+          <input aria-label="••••••••"  type="password" id="confirmNewPass" autocomplete="new-password" placeholder="••••••••" minlength="6" required>
         </div>
         <div class="auth-error" id="resetError"></div>
         <button type="submit" id="updatePasswordBtn">Update Password</button>
@@ -532,14 +729,14 @@
                 <circle cx="11" cy="11" r="8" />
                 <line x1="21" y1="21" x2="16.65" y2="16.65" />
               </svg>
-              <input type="text" id="globalSearchInput" placeholder="Search across all modules..." autocomplete="off">
+              <input type="text" id="globalSearchInput" aria-label="Search across all modules" placeholder="Search across all modules..." data-i18n-placeholder="Search across all modules..." autocomplete="off">
             </div>
             <div id="globalSearchResults" class="global-search-dropdown" style="display: none;"></div>
           </div>
 
           <!-- Notification Alerts Bell -->
           <div class="notif-bell-wrap">
-            <button type="button" id="notifBellBtn" class="notif-bell-btn" title="System Alerts & Expiries">
+            <button type="button" id="notifBellBtn" class="notif-bell-btn" title="System Alerts & Expiries" aria-label="System Alerts and Expiries">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
                 <path d="M13.73 21a2 2 0 0 1-3.46 0" />
@@ -548,11 +745,11 @@
             </button>
             <div id="notifDrawer" class="notif-dropdown" style="display: none;">
               <div class="notif-header">
-                <h3>🔔 Urgent Alerts & Expiries</h3>
-                <button type="button" class="notif-close-btn" onclick="toggleNotifDrawer()">&times;</button>
+                <h3 data-i18n="🔔 Urgent Alerts & Expiries">🔔 Urgent Alerts & Expiries</h3>
+                <button type="button" class="notif-close-btn" onclick="toggleNotifDrawer()" aria-label="Close Alerts">&times;</button>
               </div>
               <div id="notifList" class="notif-body">
-                <div class="notif-empty">No active alerts at present.</div>
+                <div class="notif-empty" data-i18n="No active alerts at present.">No active alerts at present.</div>
               </div>
             </div>
           </div>
@@ -561,7 +758,7 @@
             <span class="date-full" id="dateFull">Loading live date...</span>
             <span class="date-time" id="dateTime">00:00:00 AM</span>
           </div>
-          <div class="profile-avatar-btn" id="profileBlock" title="Click to view & edit profile"
+          <div class="profile-avatar-btn" id="profileBlock" title="Click to view & edit profile" data-i18n-title="Click to view & edit profile"
             onclick="openUserProfileModal()">
             <div class="profile-avatar" id="profileAvatar">M</div>
           </div>
@@ -581,8 +778,8 @@
             </svg>
           </div>
           <div class="input-inner">
-            <label for="nlInput">Tell LifeLedger what happened — it sorts the rest...</label>
-            <input type="text" id="nlInput"
+            <label for="nlInput" data-i18n="Tell LifeLedger what happened — it sorts the rest...">Tell LifeLedger what happened — it sorts the rest...</label>
+            <input type="text" id="nlInput" aria-label="Quick life event entry"
               placeholder="e.g. “Spent ₹450 on food today” or “Finish the ML assignment tomorrow”" autocomplete="off">
           </div>
           <button type="submit" class="ai-add-btn">
@@ -590,40 +787,38 @@
               <line x1="12" y1="5" x2="12" y2="19" />
               <line x1="5" y1="12" x2="19" y2="12" />
             </svg>
-            <span>Add</span>
+            <span data-i18n="Add">Add</span>
           </button>
         </div>
       </form>
       <div class="chips-container">
-        <span class="chips-label">Try:</span>
-        <button type="button" class="chip-btn" data-text="Spent ₹450 on food today">I spent ₹450 on food today</button>
-        <button type="button" class="chip-btn" data-text="Paid electricity bill ₹1,200">Paid electricity bill
-          ₹1,200</button>
-        <button type="button" class="chip-btn" data-text="Received salary ₹85,000">Received salary ₹85,000</button>
-        <button type="button" class="chip-btn" data-text="Doctor appointment next Friday at 11am">Doctor appointment
-          next Friday at 11am</button>
+        <span class="chips-label" data-i18n="Try:">Try:</span>
+        <button type="button" class="chip-btn" data-chip-key="Spent ₹450 on food today" data-text="Spent ₹450 on food today">I spent ₹450 on food today</button>
+        <button type="button" class="chip-btn" data-chip-key="Paid electricity bill ₹1,200" data-text="Paid electricity bill ₹1,200">Paid electricity bill ₹1,200</button>
+        <button type="button" class="chip-btn" data-chip-key="Received salary ₹85,000" data-text="Received salary ₹85,000">Received salary ₹85,000</button>
+        <button type="button" class="chip-btn" data-chip-key="Doctor appointment next Friday at 11am" data-text="Doctor appointment next Friday at 11am">Doctor appointment next Friday at 11am</button>
       </div>
       <div class="parse-result" id="parseResult"></div>
     </div>
 
     <main id="mainContent"></main>
 
-    <footer>LifeLedger AI — Personal Life Intelligence Dashboard.</footer>
+    <footer data-i18n="LifeLedger AI — Personal Life Intelligence Dashboard.">LifeLedger AI — Personal Life Intelligence Dashboard.</footer>
 
   </div><!-- /appShell -->
 
   <!-- User Profile & Settings Modal -->
   <div id="userProfileModal" class="doc-modal-overlay" style="display: none;">
-    <div class="doc-modal-container" style="max-width: 480px; padding: 24px; border-radius: 16px;">
+    <div class="doc-modal-container" style="max-width: 530px; width: 92vw; padding: 24px; border-radius: 16px; max-height: 90vh; overflow-y: auto;">
       <div class="doc-modal-header"
         style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; border-bottom: 1px solid var(--border-color); padding-bottom: 14px;">
         <div style="display: flex; align-items: center; gap: 12px;">
           <div class="profile-avatar" id="modalProfileAvatar" style="width: 44px; height: 44px; font-size: 17px;">M
           </div>
           <div>
-            <h3 style="font-size: 17px; font-weight: 800; color: #0f172a; margin: 0;" id="modalProfileTitle">User
+            <h3 style="font-size: 17px; font-weight: 800; color: #0f172a; margin: 0;" id="modalProfileTitle" data-i18n="User Profile & Account Session">User
               Profile & Account</h3>
-            <div style="font-size: 12px; color: var(--text-muted);">View & update your profile information</div>
+            <div style="font-size: 12px; color: var(--text-muted);" data-i18n="View & update your profile and balance history">View & update your profile and balance history</div>
           </div>
         </div>
         <button type="button" class="doc-modal-close" onclick="closeUserProfileModal()">&times;</button>
@@ -631,79 +826,94 @@
 
       <form id="userProfileForm" style="display: flex; flex-direction: column; gap: 14px;">
         <div>
-          <label style="font-size: 12px; font-weight: 700; color: #64748b; margin-bottom: 4px; display: block;">Display
-            Name *</label>
-          <input type="text" id="editProfileName" placeholder="Your Name" required
+          <label for="editProfileName" data-i18n="Display Name *" style="font-size: 12px; font-weight: 700; color: #64748b; margin-bottom: 4px; display: block;">Display Name *</label>
+          <input type="text" id="editProfileName" aria-label="Display Name" placeholder="Your Name" required
             style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13.5px; outline: none; background: #ffffff;">
         </div>
 
         <div>
-          <label style="font-size: 12px; font-weight: 700; color: #64748b; margin-bottom: 4px; display: block;">Email
-            Address (Account ID)</label>
-          <input type="email" id="editProfileEmail" readonly
+          <label for="editProfileEmail" data-i18n="Email Address (Account ID)" style="font-size: 12px; font-weight: 700; color: #64748b; margin-bottom: 4px; display: block;">Email Address (Account ID)</label>
+          <input type="email" id="editProfileEmail" aria-label="Email Address" readonly
             style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13.5px; background: #f1f5f9; color: #475569; cursor: not-allowed;">
         </div>
 
         <div>
-          <label style="font-size: 12px; font-weight: 700; color: #64748b; margin-bottom: 4px; display: block;">Phone
-            Number</label>
-          <input type="tel" id="editProfilePhone" placeholder="Phone / Mobile Number"
+          <label for="editProfilePhone" data-i18n="Phone Number" style="font-size: 12px; font-weight: 700; color: #64748b; margin-bottom: 4px; display: block;">Phone Number</label>
+          <input type="tel" id="editProfilePhone" aria-label="Phone Number" placeholder="Phone / Mobile Number"
             style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13.5px; outline: none; background: #ffffff;">
         </div>
 
         <div>
-          <label style="font-size: 12px; font-weight: 700; color: #64748b; margin-bottom: 4px; display: block;">Bio /
-            About User</label>
-          <textarea id="editProfileBio" rows="3" placeholder="Add information about yourself..."
+          <label for="editProfileBio" data-i18n="Bio / About User" style="font-size: 12px; font-weight: 700; color: #64748b; margin-bottom: 4px; display: block;">Bio / About User</label>
+          <textarea id="editProfileBio" aria-label="Bio / About User" rows="3" placeholder="Add information about yourself..."
             style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13.5px; outline: none; background: #ffffff; resize: vertical; font-family: inherit;"></textarea>
+        </div>
+
+        <!-- Monthly Balance History Navigation Item -->
+        <div onclick="goToBalanceSettingsPage()"
+          style="background: #ffffff; padding: 13px 16px; border-radius: 12px; border: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; transition: all 0.2s ease; margin-top: 4px;">
+          <div>
+            <div data-i18n="Monthly Balance History" style="font-weight: 700; font-size: 13.5px; color: #0f172a;">Monthly Balance History</div>
+            <div data-i18n="View and track historical completed months" style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">View and track historical completed months</div>
+          </div>
+          <button type="button" data-i18n="Open Records" onclick="goToBalanceSettingsPage()"
+            style="background: #4f46e5; color: #ffffff; border: none; padding: 7px 15px; border-radius: 8px; font-weight: 600; font-size: 12.5px; cursor: pointer; white-space: nowrap; box-shadow: 0 2px 6px rgba(79, 70, 229, 0.2); transition: all 0.2s ease;">
+            Open Records
+          </button>
         </div>
 
         <!-- Report Issue Section in Profile -->
         <div
-          style="background: linear-gradient(135deg, #fff1f2 0%, #ffe4e6 100%); padding: 12px 14px; border-radius: 12px; border: 1px solid #fecaca; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 4px;">
-          <div style="display: flex; align-items: center; gap: 10px;">
-            <div
-              style="width: 34px; height: 34px; border-radius: 10px; background: #f43f5e; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; box-shadow: 0 2px 8px rgba(244,63,94,0.3);">
-              ⚠️</div>
-            <div>
-              <div style="font-weight: 700; font-size: 13px; color: #9f1239;">Report an Issue</div>
-              <div style="font-size: 11.5px; color: #be123c;">Facing a problem? Submit an issue report</div>
-            </div>
+          style="background: #ffffff; padding: 13px 16px; border-radius: 12px; border: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px;">
+          <div>
+            <div data-i18n="Report an Issue" style="font-weight: 700; font-size: 13.5px; color: #0f172a;">Report an Issue</div>
+            <div data-i18n="Facing a problem? Submit an issue report" style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Facing a problem? Submit an issue report</div>
           </div>
-          <button type="button" onclick="openReportIssueModal()"
-            style="background: linear-gradient(135deg, #e11d48, #be123c); color: #ffffff; border: none; padding: 7px 14px; border-radius: 8px; font-weight: 700; font-size: 12px; cursor: pointer; box-shadow: 0 3px 10px rgba(225, 29, 72, 0.25); white-space: nowrap;">
-            🚩 Report Issue
+          <button type="button" data-i18n="Report Issue" onclick="openReportIssueModal()"
+            style="background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; padding: 7px 15px; border-radius: 8px; font-weight: 600; font-size: 12.5px; cursor: pointer; white-space: nowrap; transition: all 0.2s ease;">
+            Report Issue
           </button>
+        </div>
+
+        <!-- Language Preference Section in Profile -->
+        <div
+          style="background: #ffffff; padding: 13px 16px; border-radius: 12px; border: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px;">
+          <div>
+            <label for="userLanguageSelect" data-i18n="Language / மொழி" style="font-weight: 700; font-size: 13.5px; color: #0f172a; display: block;">Language / மொழி</label>
+            <div id="currentLangLabel" style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">English (Selected)</div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <select id="userLanguageSelect" onchange="changeLanguage(this.value)" aria-label="Select Language / மொழி"
+              style="padding: 7px 12px; border-radius: 8px; border: 1.5px solid #cbd5e1; font-weight: 600; font-size: 12.5px; color: #1e293b; background: #f8fafc; cursor: pointer; outline: none;">
+              <option value="en">English (English)</option>
+              <option value="ta">தமிழ் (Tamil)</option>
+              <option value="hi">हिन्दी (Hindi)</option>
+              <option value="ml">മലയാളം (Malayalam)</option>
+              <option value="te">తెలుగు (Telugu)</option>
+              <option value="es">Español (Spanish)</option>
+              <option value="fr">Français (French)</option>
+            </select>
+          </div>
         </div>
 
         <!-- Account Session / Sign Out Section -->
         <div
-          style="background: #f8fafc; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 4px;">
-          <div style="display: flex; align-items: center; gap: 10px;">
-            <div
-              style="width: 34px; height: 34px; border-radius: 10px; background: #fee2e2; color: #dc2626; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0;">
-              🚪</div>
-            <div>
-              <div style="font-weight: 700; font-size: 13px; color: #0f172a;">Account Session</div>
-              <div style="font-size: 11.5px; color: var(--text-muted);">Sign out from this device securely</div>
-            </div>
+          style="background: #ffffff; padding: 13px 16px; border-radius: 12px; border: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px;">
+          <div>
+            <div data-i18n="Account Session" style="font-weight: 700; font-size: 13.5px; color: #0f172a;">Account Session</div>
+            <div data-i18n="Sign out from this device securely" style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Sign out from this device securely</div>
           </div>
-          <button type="button" id="modalLogoutBtn" onclick="logoutUser()"
-            style="background: #ffffff; border: 1.5px solid #fca5a5; color: #dc2626; padding: 8px 16px; border-radius: 8px; font-weight: 700; font-size: 12.5px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 1px 4px rgba(220, 38, 38, 0.08); transition: all 0.2s ease;">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-              <polyline points="16 17 21 12 16 7" />
-              <line x1="21" y1="12" x2="9" y2="12" />
-            </svg>
-            <span>Log out</span>
+          <button type="button" id="modalLogoutBtn" data-i18n="Log out" onclick="logoutUser()"
+            style="background: #fee2e2; color: #dc2626; border: 1px solid #fecaca; padding: 7px 16px; border-radius: 8px; font-weight: 700; font-size: 12.5px; cursor: pointer; white-space: nowrap; transition: all 0.2s ease;">
+            Log out
           </button>
         </div>
 
         <div style="display: flex; gap: 10px; justify-content: flex-end; align-items: center; margin-top: 8px;">
-          <button type="button" onclick="closeUserProfileModal()"
+          <button type="button" data-i18n="Cancel" onclick="closeUserProfileModal()"
             style="padding: 10px 18px; border-radius: 8px; border: 1px solid var(--border-color); background: #f1f5f9; color: #475569; font-weight: 600; font-size: 13px; cursor: pointer;">Cancel</button>
-          <button type="submit"
-            style="padding: 10px 20px; border-radius: 8px; border: none; background: linear-gradient(135deg, #6366f1, #4f46e5); color: #fff; font-weight: 700; font-size: 13px; cursor: pointer; box-shadow: 0 4px 12px rgba(79,70,229,0.25);">💾
+          <button type="submit" data-i18n="Save Profile"
+            style="padding: 10px 20px; border-radius: 8px; border: none; background: linear-gradient(135deg, #6366f1, #4f46e5); color: #fff; font-weight: 700; font-size: 13px; cursor: pointer; box-shadow: 0 4px 12px rgba(79,70,229,0.25);">
             Save Profile</button>
         </div>
       </form>
@@ -720,8 +930,8 @@
             style="width: 42px; height: 42px; border-radius: 12px; background: linear-gradient(135deg, #f43f5e, #e11d48); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 20px; box-shadow: 0 4px 12px rgba(244, 63, 94, 0.3);">
             ⚠️</div>
           <div>
-            <h3 style="font-size: 17px; font-weight: 800; color: #0f172a; margin: 0;">Report an Issue</h3>
-            <div style="font-size: 12px; color: var(--text-muted);">Submit issue details or feedback to support</div>
+            <h3 style="font-size: 17px; font-weight: 800; color: #0f172a; margin: 0;" data-i18n="Report an Issue">Report an Issue</h3>
+            <div style="font-size: 12px; color: var(--text-muted);" data-i18n="Submit issue details or feedback to support">Submit issue details or feedback to support</div>
           </div>
         </div>
         <button type="button" class="doc-modal-close" onclick="closeReportIssueModal()">&times;</button>
@@ -730,9 +940,8 @@
       <form id="reportIssueForm" style="display: flex; flex-direction: column; gap: 14px;"
         onsubmit="submitReportIssue(event)">
         <div>
-          <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Issue
-            Category *</label>
-          <select id="reportIssueCategory" required
+          <label for="reportIssueCategory" data-i18n="Issue Category *" style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Issue Category *</label>
+          <select id="reportIssueCategory" aria-label="Issue Category" required
             style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13.5px; background: #fff; outline: none;">
             <option value="Bug / Error">Bug / App Error</option>
             <option value="UI / UX Issue">UI / UX Issue</option>
@@ -744,27 +953,25 @@
         </div>
 
         <div>
-          <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Issue
-            Summary / Subject *</label>
-          <input type="text" id="reportIssueSubject" placeholder="Brief title of what went wrong..." required
+          <label for="reportIssueSubject" data-i18n="Issue Summary / Subject *" style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Issue Summary / Subject *</label>
+          <input type="text" id="reportIssueSubject" aria-label="Issue Summary or Subject" placeholder="Brief title of what went wrong..." required
             style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13.5px; outline: none; background: #ffffff;">
         </div>
 
         <div>
-          <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Detailed
-            Description *</label>
-          <textarea id="reportIssueDetails" rows="4"
+          <label for="reportIssueDetails" data-i18n="Detailed Description *" style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Detailed Description *</label>
+          <textarea id="reportIssueDetails" aria-label="Detailed Description" rows="4"
             placeholder="Describe what happened, steps to reproduce, or your feedback..." required
             style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13.5px; outline: none; background: #ffffff; resize: vertical; font-family: inherit;"></textarea>
         </div>
 
         <div
           style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 6px; border-top: 1px solid var(--border-color); padding-top: 14px;">
-          <button type="button" onclick="closeReportIssueModal()"
+          <button type="button" data-i18n="Cancel" onclick="closeReportIssueModal()"
             style="padding: 10px 18px; border-radius: 8px; border: 1px solid var(--border-color); background: #f1f5f9; color: #475569; font-weight: 600; font-size: 13px; cursor: pointer;">Cancel</button>
           <button type="submit"
             style="padding: 10px 22px; border-radius: 8px; border: none; background: linear-gradient(135deg, #f43f5e, #e11d48); color: #fff; font-weight: 700; font-size: 13px; cursor: pointer; box-shadow: 0 4px 12px rgba(244,63,94,0.3); display: inline-flex; align-items: center; gap: 6px;">
-            <span>📩 Submit Report</span>
+            <span data-i18n="Submit Report">📩 Submit Report</span>
           </button>
         </div>
       </form>
@@ -772,21 +979,40 @@
   </div>
 
   <!-- Document Preview Modal -->
-  <div id="docPreviewModal" class="doc-modal-overlay" style="display: none;">
-    <div class="doc-modal-container">
-      <div class="doc-modal-header">
-        <div>
-          <h3 id="docModalTitle">Document Preview</h3>
-          <div id="docModalSub" style="font-size: 12px; color: #64748b;">Uploaded Document</div>
+  <div id="docPreviewModal" class="doc-modal-overlay" style="display: none;" onclick="if(event.target === this) closeDocModal()">
+    <div class="doc-modal-container doc-preview-wide">
+      <div class="doc-modal-header" style="padding: 16px 24px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; background: #ffffff;">
+        <div style="display: flex; align-items: center; gap: 14px; min-width: 0; flex: 1;">
+          <div id="docModalIcon" style="width: 44px; height: 44px; border-radius: 12px; background: #eef2ff; color: #4f46e5; display: flex; align-items: center; justify-content: center; font-size: 22px; flex-shrink: 0; border: 1px solid #c7d2fe;">📁</div>
+          <div style="min-width: 0; flex: 1;">
+            <h3 id="docModalTitle" style="font-size: 17px; font-weight: 800; color: #0f172a; margin: 0; line-height: 1.3;">Document Preview</h3>
+            <div id="docModalSub" style="font-size: 12px; color: #64748b; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Uploaded Document • Clear View</div>
+          </div>
         </div>
-        <button type="button" class="doc-modal-close" onclick="closeDocModal()">&times;</button>
+        <div style="display: flex; align-items: center; gap: 10px; margin-left: 12px; flex-shrink: 0;">
+          <div id="docViewerControls" style="display: flex; align-items: center; gap: 6px;"></div>
+          <button type="button" class="doc-modal-close" onclick="closeDocModal()" style="font-size: 26px; line-height: 1; cursor: pointer; background: #f1f5f9; border: 1px solid var(--border-color); color: #475569; width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease;" title="Close Preview">&times;</button>
+        </div>
       </div>
       <div class="doc-modal-body" id="docModalBody">
         <!-- Preview Content dynamically injected -->
       </div>
-      <div class="doc-modal-footer">
-        <a id="docModalDownloadBtn" href="#" download class="doc-modal-dl-btn">📥 Download File</a>
-        <button type="button" class="doc-modal-cancel-btn" onclick="closeDocModal()">Close Viewer</button>
+      <div class="doc-modal-footer" style="padding: 14px 24px; border-top: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; background: #ffffff; flex-wrap: wrap; gap: 12px;">
+        <div id="docModalFooterMeta" style="font-size: 12.5px; color: #475569; font-weight: 600;"></div>
+        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <button type="button" id="docModalPrintBtn" onclick="printPreviewedDocument()" class="pwd-card-btn" style="background: #ffffff; color: #0f172a; border: 1px solid #cbd5e1; padding: 8px 16px; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; box-shadow: 0 1px 3px rgba(0,0,0,0.05);" title="Print Document">
+            Print
+          </button>
+          <a id="docModalOpenTabBtn" href="#" target="_blank" rel="noopener noreferrer" class="pwd-card-btn" style="background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; padding: 8px 16px; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; text-decoration: none;" title="Open in new window">
+            Full Window
+          </a>
+          <a id="docModalDownloadBtn" href="#" download class="doc-modal-dl-btn" style="background: linear-gradient(135deg, #10b981, #059669); color: #fff; padding: 8px 18px; border-radius: 8px; font-weight: 700; font-size: 13px; text-decoration: none; display: inline-flex; align-items: center;">
+            Download
+          </a>
+          <button type="button" class="doc-modal-cancel-btn" onclick="closeDocModal()" style="background: #f1f5f9; border: 1px solid #cbd5e1; padding: 8px 16px; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; color: #334155;">
+            Close
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -812,16 +1038,16 @@
       <form id="addBillForm" style="display: flex; flex-direction: column; gap: 14px;">
         <div class="modal-form-grid">
           <div style="grid-column: span 2;">
-            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Bill
+            <label for="addBillName" style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Bill
               Name *</label>
-            <input type="text" id="addBillName" placeholder="e.g. Electricity Bill, Internet, Rent" required
+            <input type="text" id="addBillName" aria-label="Bill Name" placeholder="e.g. Electricity Bill, Internet, Rent" required
               style="width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13.5px; outline: none; background: #fff;">
           </div>
 
           <div>
-            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Bill
+            <label for="addBillCategory" style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Bill
               Category / Type *</label>
-            <select id="addBillCategory" required
+            <select id="addBillCategory" aria-label="Bill Category / Type" required
               style="width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13.5px; background: #fff; outline: none;">
               <option value="Electricity">Electricity</option>
               <option value="Water">Water</option>
@@ -840,34 +1066,54 @@
           </div>
 
           <div>
-            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Amount
+            <label for="addBillAmount" style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Amount
               (₹) *</label>
-            <input type="number" step="any" id="addBillAmount" placeholder="e.g. 1200" required
+            <input type="number" step="any" id="addBillAmount" aria-label="Amount (₹)" placeholder="e.g. 1200" required
               style="width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13.5px; outline: none; background: #fff;">
           </div>
 
           <div>
-            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Due
+            <label for="addBillDue" style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Due
               Date *</label>
-            <input type="date" id="addBillDue" required
+            <input type="date" id="addBillDue" aria-label="Due Date" required
               style="width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13.5px; outline: none; background: #fff;">
           </div>
 
           <div>
-            <label
+            <label for="addBillStatus"
               style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Payment
               Status</label>
-            <select id="addBillStatus"
+            <select id="addBillStatus" aria-label="Payment Status"
               style="width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13.5px; background: #fff; outline: none;">
               <option value="Unpaid">Unpaid</option>
               <option value="Paid">Paid</option>
             </select>
           </div>
 
+          <div id="addBillFundSourceWrap" style="grid-column: span 2; display: none;">
+            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 6px;">DEDUCT AMOUNT FROM *</label>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+              <label id="addBillFundIncomeLabel" style="border: 2px solid #6366f1; background: #eef2ff; border-radius: 10px; padding: 10px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.2s;">
+                <input type="radio" name="addBillFundSource" id="addBillFundIncome" value="income" checked onchange="onBillFundSourceChange('add', 'income')" style="accent-color: #4f46e5;">
+                <div>
+                  <div style="font-weight: 700; font-size: 13px; color: #1e1b4b;">💵 Current Month Income</div>
+                  <div id="addBillIncomeAvail" style="font-size: 11px; color: #4338ca;">From monthly earnings</div>
+                </div>
+              </label>
+              <label id="addBillFundSavingsLabel" style="border: 2px solid var(--border-color); background: #fff; border-radius: 10px; padding: 10px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.2s;">
+                <input type="radio" name="addBillFundSource" id="addBillFundSavings" value="savings" onchange="onBillFundSourceChange('add', 'savings')" style="accent-color: #4f46e5;">
+                <div>
+                  <div style="font-weight: 700; font-size: 13px; color: #0f172a;">🏦 Savings (Rollover)</div>
+                  <div id="addBillSavingsAvail" style="font-size: 11px; color: var(--text-muted);">From previous month savings</div>
+                </div>
+              </label>
+            </div>
+          </div>
+
           <div style="grid-column: span 2;">
-            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Notes
+            <label for="addBillNotes" style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Notes
               (Optional)</label>
-            <textarea id="addBillNotes" rows="2" placeholder="Account numbers, reference IDs, or notes..."
+            <textarea id="addBillNotes" aria-label="Notes (Optional)" rows="2" placeholder="Account numbers, reference IDs, or notes..."
               style="width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13.5px; outline: none; background: #fff; resize: vertical; font-family: inherit;"></textarea>
           </div>
 
@@ -879,8 +1125,8 @@
                 <div style="font-size: 11.5px; color: var(--text-muted);">Automatically repeat bill record every month
                   or year</div>
               </div>
-              <label class="switch" style="position: relative; display: inline-block; width: 44px; height: 24px;">
-                <input type="checkbox" id="addBillRecurring" onchange="toggleAddRecurringFrequency(this.checked)"
+              <label for="addBillRecurringType" class="switch" style="position: relative; display: inline-block; width: 44px; height: 24px;">
+                <input type="checkbox" id="addBillRecurring" aria-label="Recurring bill toggle" onchange="toggleAddRecurringFrequency(this.checked)"
                   style="opacity: 0; width: 0; height: 0;">
                 <span class="slider"
                   style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #cbd5e1; transition: .3s; border-radius: 24px;"></span>
@@ -891,7 +1137,7 @@
               <label
                 style="font-size: 11.5px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Recurrence
                 Frequency</label>
-              <select id="addBillRecurringType"
+              <select id="addBillRecurringType" aria-label="Recurrence Frequency"
                 style="width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border-color); font-size: 12.5px; background: #fff;">
                 <option value="Monthly">Monthly</option>
                 <option value="Yearly">Yearly</option>
@@ -900,12 +1146,12 @@
           </div>
 
           <div style="grid-column: span 2;">
-            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Upload
+            <label for="editBillName" style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Upload
               Bill PDF (Optional)</label>
             <div
               style="border: 2px dashed #cbd5e1; padding: 16px; border-radius: 12px; text-align: center; background: #f8fafc; cursor: pointer; transition: all 0.2s ease;"
               onclick="document.getElementById('addBillPdfInput').click()">
-              <input type="file" id="addBillPdfInput" accept=".pdf,application/pdf" style="display: none;"
+              <input type="file" id="addBillPdfInput" aria-label="Upload Bill PDF" accept=".pdf,application/pdf" style="display: none;"
                 onchange="handleAddBillPdfSelect(event)">
               <div id="addBillPdfPlaceholder">
                 <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#6366f1" stroke-width="2"
@@ -970,15 +1216,15 @@
           <div style="grid-column: span 2;">
             <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Bill
               Name *</label>
-            <input type="text" id="editBillName" required
+            <input type="text" id="editBillName" aria-label="Upload Bill PDF (Optional) Click to select PDF document PDF files up to 10MB accepted 📄 file.pdf PDF Document Remove Cancel 💾 Save Bill ✏️ Edit Bill Details Update bill parameters, dates and PDF attachment &times; Bill Name" required
               style="width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13.5px; outline: none; background: #fff;">
           </div>
 
           <div>
-            <label
+            <label for="editBillCategory"
               style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Category /
               Type *</label>
-            <select id="editBillCategory"
+            <select id="editBillCategory" aria-label="Category / Type"
               style="width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13.5px; background: #fff; outline: none;">
               <option value="Electricity">Electricity</option>
               <option value="Water">Water</option>
@@ -997,34 +1243,54 @@
           </div>
 
           <div>
-            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Amount
+            <label for="editBillAmount" style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Amount
               (₹) *</label>
-            <input type="number" step="any" id="editBillAmount" required
+            <input type="number" step="any" id="editBillAmount" aria-label="Amount (₹)" required
               style="width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13.5px; outline: none; background: #fff;">
           </div>
 
           <div>
-            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Due
+            <label for="editBillDue" style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Due
               Date *</label>
-            <input type="date" id="editBillDue" required
+            <input type="date" id="editBillDue" aria-label="Due Date" required
               style="width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13.5px; outline: none; background: #fff;">
           </div>
 
           <div>
-            <label
+            <label for="editBillStatus"
               style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Payment
               Status</label>
-            <select id="editBillStatus"
+            <select id="editBillStatus" aria-label="Payment Status"
               style="width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13.5px; background: #fff; outline: none;">
               <option value="Unpaid">Unpaid</option>
               <option value="Paid">Paid</option>
             </select>
           </div>
 
+          <div id="editBillFundSourceWrap" style="grid-column: span 2; display: none;">
+            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 6px;">DEDUCT AMOUNT FROM *</label>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+              <label id="editBillFundIncomeLabel" style="border: 2px solid #6366f1; background: #eef2ff; border-radius: 10px; padding: 10px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.2s;">
+                <input type="radio" name="editBillFundSource" id="editBillFundIncome" value="income" checked onchange="onBillFundSourceChange('edit', 'income')" style="accent-color: #4f46e5;">
+                <div>
+                  <div style="font-weight: 700; font-size: 13px; color: #1e1b4b;">💵 Current Month Income</div>
+                  <div id="editBillIncomeAvail" style="font-size: 11px; color: #4338ca;">From monthly earnings</div>
+                </div>
+              </label>
+              <label id="editBillFundSavingsLabel" style="border: 2px solid var(--border-color); background: #fff; border-radius: 10px; padding: 10px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.2s;">
+                <input type="radio" name="editBillFundSource" id="editBillFundSavings" value="savings" onchange="onBillFundSourceChange('edit', 'savings')" style="accent-color: #4f46e5;">
+                <div>
+                  <div style="font-weight: 700; font-size: 13px; color: #0f172a;">🏦 Savings (Rollover)</div>
+                  <div id="editBillSavingsAvail" style="font-size: 11px; color: var(--text-muted);">From previous month savings</div>
+                </div>
+              </label>
+            </div>
+          </div>
+
           <div style="grid-column: span 2;">
-            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Notes
+            <label for="editBillNotes" style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Notes
               (Optional)</label>
-            <textarea id="editBillNotes" rows="2" placeholder="Additional details..."
+            <textarea id="editBillNotes" aria-label="Notes (Optional)" rows="2" placeholder="Additional details..."
               style="width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13.5px; outline: none; background: #fff; resize: vertical; font-family: inherit;"></textarea>
           </div>
 
@@ -1036,8 +1302,8 @@
                 <div style="font-size: 11.5px; color: var(--text-muted);">Automatically repeat bill record every month
                   or year</div>
               </div>
-              <label class="switch" style="position: relative; display: inline-block; width: 44px; height: 24px;">
-                <input type="checkbox" id="editBillRecurring" onchange="toggleEditRecurringFrequency(this.checked)"
+              <label for="editBillRecurringType" class="switch" style="position: relative; display: inline-block; width: 44px; height: 24px;">
+                <input type="checkbox" id="editBillRecurring" aria-label="Recurring bill toggle" onchange="toggleEditRecurringFrequency(this.checked)"
                   style="opacity: 0; width: 0; height: 0;">
                 <span class="slider"
                   style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #cbd5e1; transition: .3s; border-radius: 24px;"></span>
@@ -1048,7 +1314,7 @@
               <label
                 style="font-size: 11.5px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Recurrence
                 Frequency</label>
-              <select id="editBillRecurringType"
+              <select id="editBillRecurringType" aria-label="Recurrence Frequency"
                 style="width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border-color); font-size: 12.5px; background: #fff;">
                 <option value="Monthly">Monthly</option>
                 <option value="Yearly">Yearly</option>
@@ -1057,12 +1323,12 @@
           </div>
 
           <div style="grid-column: span 2;">
-            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Bill
+            <label for="subName" style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Bill
               PDF Attachment</label>
             <div
               style="border: 2px dashed #cbd5e1; padding: 14px; border-radius: 12px; text-align: center; background: #f8fafc; cursor: pointer; transition: all 0.2s ease;"
               onclick="document.getElementById('editBillPdfInput').click()">
-              <input type="file" id="editBillPdfInput" accept=".pdf,application/pdf" style="display: none;"
+              <input type="file" id="editBillPdfInput" aria-label="Upload Bill PDF" accept=".pdf,application/pdf" style="display: none;"
                 onchange="handleEditBillPdfSelect(event)">
               <div id="editBillPdfPlaceholder">
                 <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="#3b82f6" stroke-width="2"
@@ -1121,8 +1387,7 @@
       </div>
       <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 14px;">
         <a id="billPdfDownloadBtn" href="#" download class="doc-modal-dl-btn"
-          style="padding: 8px 16px; border-radius: 8px; background: #10b981; color: #fff; text-decoration: none; font-weight: 700; font-size: 12.5px; display: inline-flex; align-items: center; gap: 6px;">📥
-          Download PDF</a>
+          style="padding: 8px 16px; border-radius: 8px; background: #10b981; color: #fff; text-decoration: none; font-weight: 700; font-size: 12.5px; display: inline-flex; align-items: center; gap: 6px;">Download PDF</a>
         <button type="button" onclick="closeBillPdfModal()"
           style="padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border-color); background: #f1f5f9; color: #475569; font-weight: 600; font-size: 12.5px; cursor: pointer;">Close
           Viewer</button>
@@ -1147,41 +1412,41 @@
             <label
               style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Service /
               Subscription Name</label>
-            <input type="text" id="subName" placeholder="e.g. Netflix, Spotify, Amazon Prime" required
+            <input type="text" id="subName" aria-label="Bill PDF Attachment Click to upload or replace PDF 📄 file.pdf PDF Document Attached Remove PDF Cancel 💾 Save Changes Bill PDF Viewer Uploaded Bill Document &times; Download PDF Close Viewer + Add Subscription Manage active recurring subscription details &times; Service / Subscription Name" placeholder="e.g. Netflix, Spotify, Amazon Prime" required
               style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
           </div>
           <div>
-            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Amount
+            <label for="subAmount" style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Amount
               (₹)</label>
-            <input type="number" step="any" id="subAmount" placeholder="e.g. 649" required
+            <input type="number" step="any" id="subAmount" aria-label="Amount (₹)" placeholder="e.g. 649" required
               style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
           </div>
           <div>
-            <label
+            <label for="subCycle"
               style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Billing
               Cycle</label>
-            <select id="subCycle"
+            <select id="subCycle" aria-label="Billing Cycle"
               style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; background: #fff;">
               <option value="Monthly">Monthly</option>
               <option value="Yearly">Yearly</option>
             </select>
           </div>
           <div>
-            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Start
+            <label for="subStartDate" style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Start
               Date</label>
-            <input type="date" id="subStartDate"
+            <input type="date" id="subStartDate" aria-label="Start Date"
               style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
           </div>
           <div>
-            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Next
+            <label for="subNextBilling" style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Next
               Billing Date</label>
-            <input type="date" id="subNextBilling" required
+            <input type="date" id="subNextBilling" aria-label="Next Billing Date" required
               style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
           </div>
           <div>
-            <label
+            <label for="subCategory"
               style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Category</label>
-            <select id="subCategory"
+            <select id="subCategory" aria-label="Category"
               style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; background: #fff;">
               <option value="Entertainment">Entertainment</option>
               <option value="Utilities">Utilities</option>
@@ -1193,10 +1458,10 @@
             </select>
           </div>
           <div>
-            <label
+            <label for="subPaymentMethod"
               style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Payment
               Method</label>
-            <select id="subPaymentMethod"
+            <select id="subPaymentMethod" aria-label="Payment Method"
               style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; background: #fff;">
               <option value="Credit Card">Credit Card</option>
               <option value="Debit Card">Debit Card</option>
@@ -1207,18 +1472,18 @@
             </select>
           </div>
           <div>
-            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Auto
+            <label for="subAutoRenewal" style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Auto
               Renewal</label>
-            <select id="subAutoRenewal"
+            <select id="subAutoRenewal" aria-label="Auto Renewal"
               style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; background: #fff;">
               <option value="Yes">Yes</option>
               <option value="No">No</option>
             </select>
           </div>
           <div>
-            <label
+            <label for="subStatus"
               style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Status</label>
-            <select id="subStatus"
+            <select id="subStatus" aria-label="Status"
               style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; background: #fff;">
               <option value="Active">Active</option>
               <option value="Paused">Paused</option>
@@ -1226,9 +1491,9 @@
             </select>
           </div>
           <div style="grid-column: span 2;">
-            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Notes
+            <label for="subNotes" style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Notes
               (Optional)</label>
-            <input type="text" id="subNotes" placeholder="Additional notes..."
+            <input type="text" id="subNotes" aria-label="Notes (Optional)" placeholder="Additional notes..."
               style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
           </div>
         </div>
@@ -1255,29 +1520,29 @@
         <div class="doc-modal-body modal-form-grid">
           <input type="hidden" id="editApptId">
           <div style="grid-column: span 2;">
-            <label
+            <label for="editApptTitle"
               style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Appointment
               Title</label>
-            <input type="text" id="editApptTitle" required
+            <input type="text" id="editApptTitle" aria-label="Appointment Title" required
               style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
           </div>
           <div>
-            <label
+            <label for="editApptDate"
               style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Appointment
               Date</label>
             <input type="date" id="editApptDate" aria-label="Appointment Date" required
               style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; background: #fff;">
           </div>
           <div>
-            <label
+            <label for="editApptTime"
               style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Time</label>
-            <input type="text" id="editApptTime" placeholder="e.g. 11:00 AM" required
+            <input type="text" id="editApptTime" aria-label="Time" placeholder="e.g. 11:00 AM" required
               style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
           </div>
           <div style="grid-column: span 2;">
-            <label
+            <label for="editApptCategory"
               style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Category</label>
-            <select id="editApptCategory"
+            <select id="editApptCategory" aria-label="Category"
               style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; background: #fff; font-weight: 600;">
               <option value="Personal">Personal</option>
               <option value="Business">Business</option>
@@ -1307,31 +1572,31 @@
         <div class="doc-modal-body modal-form-grid">
           <input type="hidden" id="editGoalId">
           <div style="grid-column: span 2;">
-            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Goal
+            <label for="editGoalTitle" style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Goal
               Title</label>
-            <input type="text" id="editGoalTitle" required placeholder="Goal Title (e.g. Buy New Laptop)"
+            <input type="text" id="editGoalTitle" aria-label="Goal Title" required placeholder="Goal Title (e.g. Buy New Laptop)"
               style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
           </div>
           <div style="grid-column: span 2;">
-            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Goal
+            <label for="editGoalDetails" style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Goal
               Details / Description</label>
-            <input type="text" id="editGoalDetails" placeholder="Save money for purchasing a new laptop for studies..."
+            <input type="text" id="editGoalDetails" aria-label="Goal Details / Description" placeholder="Save money for purchasing a new laptop for studies..."
               style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
           </div>
           <div style="grid-column: span 2;">
-            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Target
+            <label for="editGoalTarget" style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Target
               Amount (₹)</label>
-            <input type="number" id="editGoalTarget" required min="1" step="any" placeholder="80000"
+            <input type="number" id="editGoalTarget" aria-label="Target Amount (₹)" required min="1" step="any" placeholder="80000"
               style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
           </div>
           <div>
-            <label style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Start
+            <label for="editGoalStartDate" style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Start
               Date</label>
             <input type="date" id="editGoalStartDate" aria-label="Start Date" required
               style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; background: #fff;">
           </div>
           <div>
-            <label
+            <label for="editGoalDeadlineDate"
               style="font-size: 12px; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">Deadline</label>
             <input type="date" id="editGoalDeadlineDate" aria-label="Deadline" required
               style="width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; background: #fff;">
@@ -1368,7 +1633,7 @@
         <div class="tx-form-grid">
           <!-- 1. Transaction Type Toggle (Full Width) -->
           <div class="tx-col-full">
-            <label class="tx-label">TRANSACTION TYPE</label>
+            <label for="txDate" class="tx-label">TRANSACTION TYPE</label>
             <div class="tx-type-selector">
               <label id="txTypeIncomeLabel" class="tx-type-pill active-income" for="txTypeIncome">
                 <input type="radio" name="txTypeRadio" id="txTypeIncome" value="income"
@@ -1390,7 +1655,7 @@
             <label class="tx-label" for="txAmount">AMOUNT (₹) <span class="tx-req">*</span></label>
             <div class="tx-amount-wrapper">
               <span class="tx-amount-prefix" aria-hidden="true">₹</span>
-              <input type="number" id="txAmount" class="tx-input tx-amount-input" required min="0.01" step="any"
+              <input aria-label="e.g. 50000"  type="number" id="txAmount" class="tx-input tx-amount-input" required min="0.01" step="any"
                 placeholder="e.g. 50000" inputmode="decimal">
             </div>
           </div>
@@ -1398,7 +1663,7 @@
           <!-- 3. Date Field (Column 2 on Desktop/Tablet, stacked on Mobile) -->
           <div class="tx-col-half">
             <label class="tx-label" for="txDate">DATE <span class="tx-req">*</span></label>
-            <input type="date" id="txDate" class="tx-input tx-date-input" required>
+            <input type="date" id="txDate" aria-label="TRANSACTION TYPE 📈 + Income 📉 - Expense AMOUNT (₹) ₹ DATE" class="tx-input tx-date-input" onchange="updateTxFundSourceVisibility()" required>
           </div>
 
           <!-- 4. Category Field (Full Width) -->
@@ -1412,10 +1677,33 @@
             </div>
           </div>
 
+          <!-- Deduct From (Only for Expenses when after one month) -->
+          <div id="txFundSourceWrap" class="tx-col-full" style="display: none;">
+            <label class="tx-label">DEDUCT AMOUNT FROM <span class="tx-req">*</span></label>
+            <div class="fund-source-selector" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+              <label id="txFundIncomeLabel" class="tx-type-pill active-income" for="txFundIncome" style="cursor: pointer; justify-content: flex-start; padding: 10px 14px;">
+                <input type="radio" name="txFundSource" id="txFundIncome" value="income" onchange="onTxFundSourceChange('income')" checked>
+                <span class="tx-pill-badge" aria-hidden="true">💵</span>
+                <div>
+                  <div style="font-weight: 700; font-size: 13px;">Current Month Income</div>
+                  <div id="txFundIncomeAvail" style="font-size: 11px; font-weight: 500; opacity: 0.85;">From monthly earnings</div>
+                </div>
+              </label>
+              <label id="txFundSavingsLabel" class="tx-type-pill" for="txFundSavings" style="cursor: pointer; justify-content: flex-start; padding: 10px 14px;">
+                <input type="radio" name="txFundSource" id="txFundSavings" value="savings" onchange="onTxFundSourceChange('savings')">
+                <span class="tx-pill-badge" aria-hidden="true">🏦</span>
+                <div>
+                  <div style="font-weight: 700; font-size: 13px;">Savings (Rollover)</div>
+                  <div id="txFundSavingsAvail" style="font-size: 11px; font-weight: 500; opacity: 0.85;">From previous month savings</div>
+                </div>
+              </label>
+            </div>
+          </div>
+
           <!-- 5. Description Field (Full Width) -->
           <div class="tx-col-full">
             <label class="tx-label" for="txDesc">DESCRIPTION <span class="tx-req">*</span></label>
-            <input type="text" id="txDesc" class="tx-input" required
+            <input aria-label="e.g. Monthly Salary, Freelance project, Groceries"  type="text" id="txDesc" class="tx-input" required
               placeholder="e.g. Monthly Salary, Freelance project, Groceries" autocomplete="off">
           </div>
         </div>

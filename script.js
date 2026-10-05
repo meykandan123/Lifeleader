@@ -12,6 +12,11 @@ function blankState() {
       phone: "",
       bio: ""
     },
+    startingBalance: {
+      month: "2026-09",
+      amount: 2700
+    },
+    monthlyBalances: {},
     income: [],
     expenses: [],
     budget: {
@@ -267,7 +272,7 @@ function syncBillToFinance(bill) {
     "Other": "Other"
   };
   const mappedCategory = categoryMap[bill.category] || bill.category || "Utilities";
-  const expenseDate = bill.due || new Date().toISOString().split("T")[0];
+  const expenseDate = (bill.status === "Paid" && bill.paidDate) ? bill.paidDate : (bill.due || new Date().toISOString().split("T")[0]);
   const monthKey = getMonthYearKey(expenseDate);
 
   const existingIndex = state.expenses.findIndex(e => (e.sourceType === "bill" || e.source === "bill") && (e.sourceId === bill.id || e.id === bill.id));
@@ -278,6 +283,7 @@ function syncBillToFinance(bill) {
     state.expenses[existingIndex].category = mappedCategory;
     state.expenses[existingIndex].date = expenseDate;
     state.expenses[existingIndex].billingPeriod = monthKey;
+    state.expenses[existingIndex].paidFrom = bill.paidFrom || "income";
   } else {
     state.expenses.unshift({
       id: bill.id,
@@ -288,7 +294,8 @@ function syncBillToFinance(bill) {
       desc: `Bill: ${bill.name}`,
       amount: bill.amount,
       category: mappedCategory,
-      date: expenseDate
+      date: expenseDate,
+      paidFrom: bill.paidFrom || "income"
     });
   }
 }
@@ -447,6 +454,12 @@ function getAvailableFinanceMonthYears() {
     });
   }
 
+  if (state.monthlyBalances) {
+    Object.keys(state.monthlyBalances).forEach(k => {
+      if (k) set.add(k);
+    });
+  }
+
   return Array.from(set).sort();
 }
 
@@ -504,7 +517,7 @@ function saveSessionData() {
     usersDB[currentUser].data = state;
 
     // Real-time Cloud Sync with Firebase Firestore (Single Source of Truth)
-    if (window.Firebase && typeof window.Firebase.syncUserDataToCloud === "function") {
+    if ((typeof navigator === 'undefined' || navigator.onLine) && window.Firebase && typeof window.Firebase.syncUserDataToCloud === "function") {
       window.Firebase.syncUserDataToCloud(currentUser, state);
     }
   }
@@ -545,17 +558,19 @@ function loadSessionData() {
       };
 
       // Async fetch cloud state from Firebase Firestore
-      if (window.Firebase && typeof window.Firebase.fetchUserDataFromCloud === "function") {
-        window.Firebase.fetchUserDataFromCloud(currentUser).then(cloudData => {
-          applyCloudSync(cloudData);
-        });
-      }
+      if (typeof navigator === 'undefined' || navigator.onLine) {
+        if (window.Firebase && typeof window.Firebase.fetchUserDataFromCloud === "function") {
+          window.Firebase.fetchUserDataFromCloud(currentUser).then(cloudData => {
+            applyCloudSync(cloudData);
+          }).catch(() => {});
+        }
 
-      // Real-time live NoSQL Firestore subscription listener across browser tabs / devices
-      if (window.Firebase && typeof window.Firebase.subscribeToCloudData === "function") {
-        window.Firebase.subscribeToCloudData(currentUser, (cloudData) => {
-          applyCloudSync(cloudData);
-        });
+        // Real-time live NoSQL Firestore subscription listener across browser tabs / devices
+        if (window.Firebase && typeof window.Firebase.subscribeToCloudData === "function") {
+          window.Firebase.subscribeToCloudData(currentUser, (cloudData) => {
+            applyCloudSync(cloudData);
+          });
+        }
       }
 
       return currentUser;
@@ -570,7 +585,9 @@ function loadSessionData() {
 function updateLiveDate() {
   const now = new Date();
   const optionsDate = { day: 'numeric', month: 'long', year: 'numeric' };
-  const dateStr = now.toLocaleDateString('en-GB', optionsDate);
+  const localeMap = { en: 'en-US', ta: 'ta-IN', hi: 'hi-IN', ml: 'ml-IN', te: 'te-IN', es: 'es-ES', fr: 'fr-FR' };
+  const loc = (typeof currentLanguage !== "undefined" && localeMap[currentLanguage]) ? localeMap[currentLanguage] : 'en-US';
+  const dateStr = now.toLocaleDateString(loc, optionsDate);
   const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
 
   const dateFullEl = document.getElementById("dateFull");
@@ -667,6 +684,132 @@ function totalExpenseForMonth(monthKey) {
   return getFinanceExpensesForMonth(monthKey).reduce((s, e) => s + (e.amount || 0), 0);
 }
 
+function totalIncomeExpenseForMonth(monthKey) {
+  return getFinanceExpensesForMonth(monthKey)
+    .filter(e => e.paidFrom !== "savings")
+    .reduce((s, e) => s + (e.amount || 0), 0);
+}
+
+function totalSavingsExpenseForMonth(monthKey) {
+  return getFinanceExpensesForMonth(monthKey)
+    .filter(e => e.paidFrom === "savings")
+    .reduce((s, e) => s + (e.amount || 0), 0);
+}
+
+function hasPreviousMonthSavings(targetMonthKey) {
+  const currentKey = targetMonthKey || getCurrentFinanceMonthKey();
+  const completed = typeof getCompletedMonths === "function" ? getCompletedMonths() : [];
+  const savingsData = getMonthlySavingsData(currentKey);
+  return completed.length > 0 || savingsData.lastMonthBalance > 0;
+}
+
+function getStartingBalance() {
+  if (!state.startingBalance || typeof state.startingBalance !== 'object') {
+    state.startingBalance = { month: "2026-09", amount: 2700 };
+  }
+  if (!state.startingBalance.month) state.startingBalance.month = "2026-09";
+  if (state.startingBalance.amount === undefined || state.startingBalance.amount === null) state.startingBalance.amount = 2700;
+  return state.startingBalance;
+}
+
+function getMonthlyBalance(monthKey) {
+  if (!state.monthlyBalances) state.monthlyBalances = {};
+  if (state.monthlyBalances[monthKey] !== undefined && state.monthlyBalances[monthKey] !== null) {
+    const val = Number(state.monthlyBalances[monthKey]);
+    if (!isNaN(val)) return val;
+  }
+  const inc = totalIncomeForMonth(monthKey);
+  const exp = totalIncomeExpenseForMonth(monthKey);
+  const net = inc - exp;
+  const startBal = getStartingBalance();
+  if (startBal && startBal.month === monthKey && inc === 0 && exp === 0) {
+    return Number(startBal.amount) || 0;
+  }
+  return net;
+}
+
+function getPreviousMonthKey(monthKey) {
+  if (!monthKey || !monthKey.includes("-")) {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  }
+  const [yyyy, mm] = monthKey.split("-").map(n => parseInt(n, 10));
+  const d = new Date(yyyy, mm - 2, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function getMonthlySavingsData(targetMonthKey) {
+  const monthKey = targetMonthKey || getCurrentFinanceMonthKey();
+  const prevKey = getPreviousMonthKey(monthKey);
+
+  // 1. Direct last month's balance (custom edited or computed)
+  const lastMonthNet = getMonthlyBalance(prevKey);
+  const lastMonthBalance = Math.max(0, lastMonthNet);
+
+  // 2. Cumulative rollover across chronological historical months if user has multi-month history
+  let cumulativeSurplus = 0;
+  if (typeof getAvailableFinanceMonthYears === "function") {
+    const allMonths = getAvailableFinanceMonthYears().filter(m => m < monthKey).sort();
+    for (const m of allMonths) {
+      const mNet = getMonthlyBalance(m);
+      cumulativeSurplus = Math.max(0, cumulativeSurplus + mNet);
+    }
+  }
+
+  // Raw rollover pool before past savings deductions
+  const rawRollover = Math.max(lastMonthBalance, cumulativeSurplus);
+
+  // Savings spent in prior months (before monthKey)
+  const pastSavingsExp = (state.expenses || [])
+    .filter(e => {
+      const k = getMonthYearKey(e.date);
+      return k && k < monthKey && e.paidFrom === "savings";
+    })
+    .reduce((s, e) => s + (Number(e.amount) || 0), 0);
+
+  // Net rollover carried into this month after prior savings deductions
+  const rolloverFromLastMonth = Math.max(0, rawRollover - pastSavingsExp);
+
+  // Current month numbers
+  const currentInc = totalIncomeForMonth(monthKey);
+  const currentExp = totalExpenseForMonth(monthKey);
+  const incomeExp = totalIncomeExpenseForMonth(monthKey);
+  const savingsExp = totalSavingsExpenseForMonth(monthKey);
+  const currentNet = getMonthlyBalance(monthKey);
+
+  // All savings expenses spent across the entire timeline
+  const allTimeSavingsExp = (state.expenses || [])
+    .filter(e => e.paidFrom === "savings")
+    .reduce((s, e) => s + (Number(e.amount) || 0), 0);
+
+  // Remaining rollover after deducting current month's savings expenses
+  const remainingRollover = Math.max(0, rolloverFromLastMonth - savingsExp);
+
+  // Total savings in this month:
+  // Initial pool + current month net income flow - all savings spent
+  const totalSavings = Math.max(0, rawRollover + (currentNet > 0 ? currentNet : 0) - allTimeSavingsExp);
+
+  return {
+    monthKey,
+    prevKey,
+    prevMonthLabel: getMonthYearLabel(prevKey),
+    currentMonthLabel: getMonthYearLabel(monthKey),
+    rawRollover,
+    pastSavingsExp,
+    lastMonthBalance: rolloverFromLastMonth,
+    savingsFundedExp: savingsExp,
+    allTimeSavingsExp,
+    totalSavingsSpentUpToNow: allTimeSavingsExp,
+    remainingRollover,
+    currentInc,
+    currentExp,
+    incomeFundedExp: incomeExp,
+    currentNet,
+    totalSavings
+  };
+}
+
 const categoryTotals = () => {
   const t = {};
   state.expenses.forEach(e => {
@@ -719,10 +862,17 @@ function parseEntry(text) {
   const amount = amtMatch ? parseInt(amtMatch[1].replace(/,/g, ""), 10) : null;
   const isIncome = /(received|earned|got paid|income|salary|credited)/.test(low);
   const isBill = /(bill|due|subscription)/.test(low) && amount;
+  const isSavingsFunded = /(from saving|out of saving|from my saving|take.*from saving|took.*from saving|withdrew.*from saving|deduct.*saving)/i.test(low);
   const todayIso = new Date().toISOString().split("T")[0];
 
   if (isBill && !isIncome) {
-    return { type: "Bill", name: text.replace(/(?:₹|rs\.?)\s?\d[\d,]*/gi, "").replace(/is due.*$/i, "").trim() || "New Bill", amount, due: todayIso };
+    return {
+      type: "Bill",
+      name: text.replace(/(?:₹|rs\.?)\s?\d[\d,]*/gi, "").replace(/is due.*$/i, "").trim() || "New Bill",
+      amount,
+      due: todayIso,
+      paidFrom: isSavingsFunded ? "savings" : "income"
+    };
   }
   if (isIncome && amount) {
     let cleanSource = text.replace(/(?:₹|rs\.?|inr|\$|,)/gi, "").replace(/\d+/g, "").replace(/received|salary|credited|earned|got paid|income/gi, "").trim();
@@ -730,9 +880,22 @@ function parseEntry(text) {
     return { type: "Income", amount, source: cleanSource, category: "Salary", date: todayIso };
   }
   if (amount) {
-    let cleanDesc = text.replace(/(?:₹|rs\.?|inr|\$)/gi, "").replace(/\b\d[\d,]*\b/g, "").replace(/spent on|spent for|paid for|paid/gi, "").trim();
-    if (!cleanDesc || cleanDesc.length < 2) cleanDesc = "Expense";
-    return { type: "Expense", amount, category: detectCategory(text), desc: cleanDesc, date: todayIso };
+    let cleanDesc = text
+      .replace(/(?:₹|rs\.?|inr|\$)/gi, "")
+      .replace(/\b\d[\d,]*\b/g, "")
+      .replace(/spent on|spent for|paid for|paid|took from savings|take from savings|from savings|out of savings|from saving|took from saving|spent/gi, "")
+      .trim();
+    if (!cleanDesc || cleanDesc.length < 2) {
+      cleanDesc = isSavingsFunded ? "Taken from Savings" : "Expense";
+    }
+    return {
+      type: "Expense",
+      amount,
+      category: detectCategory(text),
+      desc: cleanDesc,
+      date: todayIso,
+      paidFrom: isSavingsFunded ? "savings" : "income"
+    };
   }
   return { type: "Task", title: text.trim(), priority: low.includes("urgent") || low.includes("tomorrow") ? "high" : "medium", deadline: "Tomorrow" };
 }
@@ -741,9 +904,22 @@ function handleParsed(p) {
   const todayIso = new Date().toISOString().split("T")[0];
   if (p.type === "Expense") {
     const expDate = (p.date && p.date !== "Today") ? p.date : todayIso;
-    state.expenses.unshift({ id: Date.now(), desc: p.desc, amount: p.amount, category: p.category, date: expDate });
+    const paidFrom = p.paidFrom || "income";
+    state.expenses.unshift({
+      id: Date.now(),
+      desc: p.desc,
+      amount: p.amount,
+      category: p.category,
+      date: expDate,
+      paidFrom
+    });
     saveSessionData();
-    return `<div class="pr-row"><span class="pr-field">Type: <b>Expense</b></span><span class="pr-field">Amount: <b>${fmt(p.amount)}</b></span><span class="pr-field">Category: <b>${p.category}</b></span></div>`;
+    return `<div class="pr-row">
+      <span class="pr-field">Type: <b>Expense</b></span>
+      <span class="pr-field">Amount: <b>${fmt(p.amount)}</b></span>
+      <span class="pr-field">Category: <b>${p.category}</b></span>
+      <span class="pr-field">Source: <b>${paidFrom === 'savings' ? '🏦 Savings' : '💵 Income'}</b></span>
+    </div>`;
   }
   if (p.type === "Income") {
     const incDate = (p.date && p.date !== "Today") ? p.date : todayIso;
@@ -753,11 +929,17 @@ function handleParsed(p) {
   }
   if (p.type === "Bill") {
     const billDue = (p.due && p.due !== "Next Week") ? p.due : todayIso;
-    const newBill = { id: Date.now(), name: p.name, amount: p.amount, due: billDue, status: "Upcoming", icon: "zap" };
+    const paidFrom = p.paidFrom || "income";
+    const newBill = { id: Date.now(), name: p.name, amount: p.amount, due: billDue, status: "Upcoming", icon: "zap", paidFrom };
     state.bills.unshift(newBill);
     syncBillToFinance(newBill);
     saveSessionData();
-    return `<div class="pr-row"><span class="pr-field">Type: <b>Bill</b></span><span class="pr-field">Amount: <b>${fmt(p.amount)}</b></span><span class="pr-field">Due: <b>${billDue}</b></span></div>`;
+    return `<div class="pr-row">
+      <span class="pr-field">Type: <b>Bill</b></span>
+      <span class="pr-field">Amount: <b>${fmt(p.amount)}</b></span>
+      <span class="pr-field">Due: <b>${billDue}</b></span>
+      <span class="pr-field">Source: <b>${paidFrom === 'savings' ? '🏦 Savings' : '💵 Income'}</b></span>
+    </div>`;
   }
   state.tasks.unshift({ id: Date.now(), title: p.title, priority: p.priority, deadline: p.deadline, done: false });
   saveSessionData();
@@ -784,10 +966,1118 @@ const NAV_ICONS = {
 const views = ["Dashboard", "Finance", "Bills", "Health & Wellness", "Productivity", "Documents", "Appointments", "Assets", "Notes & Journal", "Contacts", "Password"];
 let activeView = "Dashboard";
 
+/* ==========================================================================
+   MULTI-LANGUAGE LOCALIZATION (Tamil, English, Hindi, etc.)
+   ========================================================================== */
+let currentLanguage = localStorage.getItem("lifeleader_lang") || "en";
+
+const TRANSLATIONS = {
+  en: {
+    // Navigation
+    "Dashboard": "Dashboard",
+    "Finance": "Finance",
+    "Bills": "Bills",
+    "Health & Wellness": "Health & Wellness",
+    "Productivity": "Productivity",
+    "Tasks": "Tasks",
+    "Documents": "Documents",
+    "Appointments": "Appointments",
+    "Goals": "Goals",
+    "Assets": "Assets",
+    "Notes & Journal": "Notes & Journal",
+    "Contacts": "Contacts",
+    "Password": "Password",
+    "Balance Settings": "Monthly Balance History",
+
+    // Top Bar & Quick Entry
+    "Search across all modules...": "Search across all modules...",
+    "Search transactions, notes, goals...": "Search transactions, notes, goals...",
+    "Tell LifeLedger what happened — it sorts the rest...": "Tell LifeLedger what happened — it sorts the rest...",
+    "e.g. “Spent ₹450 on food today” or “Finish the ML assignment tomorrow”": "e.g. “Spent ₹450 on food today” or “Finish the ML assignment tomorrow”",
+    "Add": "Add",
+    "Try:": "Try:",
+    "I spent ₹450 on food today": "I spent ₹450 on food today",
+    "Paid electricity bill ₹1,200": "Paid electricity bill ₹1,200",
+    "Received salary ₹85,000": "Received salary ₹85,000",
+    "Doctor appointment next Friday at 11am": "Doctor appointment next Friday at 11am",
+    "Spent ₹450 on food today": "Spent ₹450 on food today",
+    "Click to view & edit profile": "Click to view & edit profile",
+    "🔔 Urgent Alerts & Expiries": "🔔 Urgent Alerts & Expiries",
+    "No active alerts at present.": "No active alerts at present.",
+
+    // Dashboard View
+    "MONTHLY INCOME": "MONTHLY INCOME",
+    "MONTHLY EXPENSES": "MONTHLY EXPENSES",
+    "NET BALANCE": "NET BALANCE",
+    "Savings": "Savings",
+    "Spending by Category": "Spending by Category",
+    "Total Expenses": "Total Expenses",
+    "Income vs Expenses": "Income vs Expenses",
+    "Cashflow Comparison": "Cashflow Comparison",
+    "Income": "Income",
+    "Expenses": "Expenses",
+    "Upcoming": "Upcoming",
+    "Bills and appointments scheduled": "Bills and appointments scheduled",
+    "items": "items",
+    "AI Insights": "AI Insights",
+    "Generated from your current data": "Generated from your current data",
+    "Goals in Progress": "Goals in Progress",
+    "active goals": "active goals",
+    "Clean Slate!": "Clean Slate!",
+    "Log your first expense, income, bill, or task above to generate personalized AI insights.": "Log your first expense, income, bill, or task above to generate personalized AI insights.",
+    "No upcoming items yet. Log a bill or appointment above!": "No upcoming items yet. Log a bill or appointment above!",
+    "No goals created yet. Add one in the Goals tab!": "No goals created yet. Add one in the Goals tab!",
+    "goals active in your tracker": "goals active in your tracker",
+    "Due": "Due",
+    "Due Soon": "Due Soon",
+
+    // Dedicated Monthly Balance History View
+    "← Back to Dashboard": "← Back to Dashboard",
+    "Monthly Balance History": "Monthly Balance History",
+    "Current Active Month": "Current Active Month",
+    "(Current Active Month)": "(Current Active Month)",
+    "Actively tracking daily transactions. Finalizes into balance history after month ends.": "Actively tracking daily transactions. Finalizes into balance history after month ends.",
+    "Dashboard Savings": "Dashboard Savings",
+    "Carried From Prev Month": "Carried From Prev Month",
+    "Current Logged Income": "Current Logged Income",
+    "Current Logged Expenses": "Current Logged Expenses",
+    "Current Month Net Flow": "Current Month Net Flow",
+    "Completed Months' Balance History": "Completed Months' Balance History",
+    "+ Record Older Month Balance": "+ Record Older Month Balance",
+    "Record Balance for an Earlier Month": "Record Balance for an Earlier Month",
+    "Closing Balance": "Closing Balance",
+    "Edit Balance": "Edit Balance",
+    "Reset": "Reset",
+    "Save": "Save",
+    "Cancel": "Cancel",
+    "Save Record": "Save Record",
+    "No completed historical months recorded yet. As months conclude, their closing balances appear here automatically.": "No completed historical months recorded yet. As months conclude, their closing balances appear here automatically.",
+
+    // User Profile Modal
+    "User Profile & Account Session": "User Profile & Account Session",
+    "User Profile & Account": "User Profile & Account",
+    "View & update your profile and balance history": "View & update your profile and balance history",
+    "Display Name *": "Display Name *",
+    "Full Name": "Full Name",
+    "Email Address (Account ID)": "Email Address (Account ID)",
+    "Registered Email": "Registered Email",
+    "Phone Number": "Phone Number",
+    "Bio / About User": "Bio / About User",
+    "Add information about yourself...": "Add information about yourself...",
+    "View and track historical completed months": "View and track historical completed months",
+    "Open Records": "Open Records",
+    "Report an Issue": "Report an Issue",
+    "Facing a problem? Submit an issue report": "Facing a problem? Submit an issue report",
+    "Report Issue": "Report Issue",
+    "Language / மொழி": "Language / மொழி",
+    "Account Session": "Account Session",
+    "Sign out from this device securely": "Sign out from this device securely",
+    "Log out": "Log out",
+    "Save Profile": "Save Profile",
+
+    // Report Issue Modal
+    "Submit issue details or feedback to support": "Submit issue details or feedback to support",
+    "Issue Category *": "Issue Category *",
+    "Issue Summary / Subject *": "Issue Summary / Subject *",
+    "Detailed Description *": "Detailed Description *",
+    "Submit Report": "Submit Report",
+
+    // Common Module Headers & Buttons
+    "Finance Overview": "Finance Overview",
+    "Total Income": "Total Income",
+    "Net Savings": "Net Savings",
+    "Export CSV": "Export CSV",
+    "+ Income": "+ Income",
+    "+ Expense": "+ Expense",
+    "Add Transaction": "Add Transaction",
+    "Add Bill": "Add Bill",
+    "Add Task": "Add Task",
+    "Add Goal": "Add Goal",
+    "Add Note": "Add Note",
+    "Add Contact": "Add Contact",
+    "Add Appointment": "Add Appointment",
+    "Add Asset": "Add Asset",
+    "Add Document": "Add Document",
+    "Add Password": "Add Password",
+    "Status": "Status",
+    "Action": "Action",
+    "Actions": "Actions",
+    "Category": "Category",
+    "Amount": "Amount",
+    "Date": "Date",
+    "All": "All",
+    "Filter": "Filter",
+    "Close": "Close",
+
+    // Footer
+    "LifeLedger AI — Personal Life Intelligence Dashboard.": "LifeLedger AI — Personal Life Intelligence Dashboard."
+  },
+
+  ta: {
+    // Navigation
+    "Dashboard": "டாஷ்போர்டு",
+    "Finance": "நிதி",
+    "Bills": "கட்டணங்கள்",
+    "Health & Wellness": "உடல்நலம்",
+    "Productivity": "பணிகள்",
+    "Tasks": "பணிகள்",
+    "Documents": "ஆவணங்கள்",
+    "Appointments": "சந்திப்புகள்",
+    "Goals": "இலக்குகள்",
+    "Assets": "சொத்துக்கள்",
+    "Notes & Journal": "குறிப்புகள்",
+    "Contacts": "தொடர்புகள்",
+    "Password": "கடவுச்சொல்",
+    "Balance Settings": "மாதாந்திர இருப்பு வரலாறு",
+
+    // Top Bar & Quick Entry
+    "Search across all modules...": "அனைத்து தொகுதிகளிலும் தேடுக...",
+    "Search transactions, notes, goals...": "பரிவர்த்தனைகள், குறிப்புகள், இலக்குகளைத் தேடுக...",
+    "Tell LifeLedger what happened — it sorts the rest...": "நடந்ததை LifeLedger-க்கு கூறுங்கள் — மீதியை இது கவனிக்கும்...",
+    "e.g. “Spent ₹450 on food today” or “Finish the ML assignment tomorrow”": "எ.கா. “இன்று உணவுக்கு ₹450 செலவழித்தேன்” அல்லது “நாளை பணிகளை முடிக்கவும்”",
+    "Add": "சேர்",
+    "Try:": "முயற்சிக்க:",
+    "I spent ₹450 on food today": "இன்று உணவுக்கு ₹450 செலவு செய்தேன்",
+    "Paid electricity bill ₹1,200": "மின்கட்டணம் ₹1,200 செலுத்தினேன்",
+    "Received salary ₹85,000": "சம்பளம் ₹85,000 பெறப்பட்டது",
+    "Doctor appointment next Friday at 11am": "அடுத்த வெள்ளிக்கிழமை காலை 11 மணிக்கு மருத்துவர் சந்திப்பு",
+    "Spent ₹450 on food today": "இன்று உணவுக்கு ₹450 செலவு செய்தேன்",
+    "Click to view & edit profile": "சுயவிவரத்தைக் காண & திருத்த கிளிக் செய்க",
+    "🔔 Urgent Alerts & Expiries": "🔔 அவசர எச்சரிக்கைகள் & காலாவதிகள்",
+    "No active alerts at present.": "தற்போது எந்த எச்சரிக்கைகளும் இல்லை.",
+
+    // Dashboard View
+    "MONTHLY INCOME": "மாதாந்திர வருமானம்",
+    "MONTHLY EXPENSES": "மாதாந்திர செலவுகள்",
+    "NET BALANCE": "நிகர இருப்பு",
+    "Savings": "சேமிப்பு",
+    "Spending by Category": "வகை வாரியாக செலவுகள்",
+    "Total Expenses": "மொத்த செலவுகள்",
+    "Income vs Expenses": "வருமானம் vs செலவுகள்",
+    "Cashflow Comparison": "பணப்புழக்க ஒப்பீடு",
+    "Income": "வருமானம்",
+    "Expenses": "செலவுகள்",
+    "Upcoming": "வரவிருப்பவை",
+    "Bills and appointments scheduled": "திட்டமிடப்பட்ட கட்டணங்கள் மற்றும் சந்திப்புகள்",
+    "items": "உருப்படிகள்",
+    "AI Insights": "AI நுண்ணறிவுகள்",
+    "Generated from your current data": "உங்கள் நடப்புத் தரவிலிருந்து உருவாக்கப்பட்டது",
+    "Goals in Progress": "முன்னேற்றத்தில் உள்ள இலக்குகள்",
+    "active goals": "செயலில் உள்ள இலக்குகள்",
+    "Clean Slate!": "புதிய தொடக்கம்!",
+    "Log your first expense, income, bill, or task above to generate personalized AI insights.": "தனிப்பயனாக்கப்பட்ட AI நுண்ணறிவுகளைப் பெற உங்கள் முதல் செலவு, வருமானம் அல்லது பணியைப் பதிவு செய்க.",
+    "No upcoming items yet. Log a bill or appointment above!": "வரவிருக்கும் நிகழ்வுகள் எதுவும் இல்லை. மேலே உள்ள பெட்டியில் பில் அல்லது சந்திப்பைப் பதிவு செய்க!",
+    "No goals created yet. Add one in the Goals tab!": "இன்னும் இலக்குகள் உருவாக்கப்படவில்லை. இலக்குகள் பகுதியில் ஒன்றைச் சேர்க்கவும்!",
+    "goals active in your tracker": "இலக்குகள் உங்கள் கண்காணிப்பில் செயலில் உள்ளன",
+    "Due": "கெடு தேதி",
+    "Due Soon": "விரைவில் செலுத்த வேண்டும்",
+
+    // Dedicated Monthly Balance History View
+    "← Back to Dashboard": "← டாஷ்போர்டுக்குத் திரும்பு",
+    "Monthly Balance History": "மாதாந்திர இருப்பு வரலாறு",
+    "Current Active Month": "நடப்பு மாதம்",
+    "(Current Active Month)": "(நடப்பு மாதம்)",
+    "Actively tracking daily transactions. Finalizes into balance history after month ends.": "தினசரி பரிவர்த்தனைகள் கண்காணிக்கப்படுகின்றன. மாதம் முடிந்ததும் இருப்பு வரலாற்றில் சேர்க்கப்படும்.",
+    "Dashboard Savings": "டாஷ்போர்டு சேமிப்பு",
+    "Carried From Prev Month": "முந்தைய மாதத்திலிருந்து கொண்டுவரப்பட்டது",
+    "Current Logged Income": "நடப்புப் பதிவான வருமானம்",
+    "Current Logged Expenses": "நடப்புப் பதிவான செலவுகள்",
+    "Current Month Net Flow": "நடப்பு மாத நிகர இருப்பு",
+    "Completed Months' Balance History": "முடிவடைந்த மாதங்களின் இருப்பு வரலாறு",
+    "+ Record Older Month Balance": "+ முந்தைய மாத இருப்பைப் பதிவு செய்க",
+    "Record Balance for an Earlier Month": "முந்தைய மாத இருப்பைப் பதிவு செய்க",
+    "Closing Balance": "இறுதி இருப்பு",
+    "Edit Balance": "இருப்பைத் திருத்து",
+    "Reset": "மீட்டமை",
+    "Save": "சேமி",
+    "Cancel": "ரத்து செய்",
+    "Save Record": "இருப்பைச் சேமி",
+    "No completed historical months recorded yet. As months conclude, their closing balances appear here automatically.": "முடிவடைந்த மாதங்களின் பதிவுகள் எதுவும் இல்லை. மாதங்கள் முடிவடைந்ததும், அவற்றின் இறுதி இருப்புகள் தானாகவே இங்கு தோன்றும்.",
+
+    // User Profile Modal
+    "User Profile & Account Session": "பயனர் சுயவிவரம் & கணக்கு அமர்வு",
+    "User Profile & Account": "பயனர் சுயவிவரம் & கணக்கு",
+    "View & update your profile and balance history": "உங்கள் சுயவிவரம் மற்றும் இருப்பு வரலாற்றைக் காண்க & புதுப்பிக்கவும்",
+    "Display Name *": "காட்சிப் பெயர் *",
+    "Full Name": "முழுப் பெயர்",
+    "Email Address (Account ID)": "மின்னஞ்சல் முகவரி (கணக்கு ஐடி)",
+    "Registered Email": "பதிவுசெய்த மின்னஞ்சல்",
+    "Phone Number": "தொலைபேசி எண்",
+    "Bio / About User": "பயனர் பற்றிய தகவல்",
+    "Add information about yourself...": "உங்களைப் பற்றிய தகவலைச் சேர்க்கவும்...",
+    "View and track historical completed months": "கடந்த கால முடிவடைந்த மாதங்களைக் காண்க & கண்காணிக்கவும்",
+    "Open Records": "பதிவுகளைத் திற",
+    "Report an Issue": "சிக்கலைப் புகாரளிக்கவும்",
+    "Facing a problem? Submit an issue report": "சிக்கலை எதிர்கொள்கிறீர்களா? புகார் அறிக்கையைச் சமர்ப்பிக்கவும்",
+    "Report Issue": "சிக்கலைப் புகாரளி",
+    "Language / மொழி": "மொழி (Language)",
+    "Account Session": "கணக்கு அமர்வு",
+    "Sign out from this device securely": "இந்தச் சாதனத்திலிருந்து பாதுகாப்பாக வெளியேறவும்",
+    "Log out": "வெளியேறு",
+    "Save Profile": "சுயவிவரத்தைச் சேமி",
+
+    // Report Issue Modal
+    "Submit issue details or feedback to support": "சிக்கல் விவரங்கள் அல்லது பின்னூட்டத்தை ஆதரவுக் குழுவுக்கு அனுப்பவும்",
+    "Issue Category *": "சிக்கல் வகை *",
+    "Issue Summary / Subject *": "சிக்கல் சுருக்கம் / தலைப்பு *",
+    "Detailed Description *": "விரிவான விளக்கம் *",
+    "Submit Report": "அறிக்கையைச் சமர்ப்பி",
+
+    // Common Module Headers & Buttons
+    "Finance Overview": "நிதி மேலோட்டம்",
+    "Total Income": "மொத்த வருமானம்",
+    "Net Savings": "நிகர சேமிப்பு",
+    "Export CSV": "CSV ஏற்றுமதி",
+    "+ Income": "+ வருமானம்",
+    "+ Expense": "+ செலவு",
+    "Add Transaction": "பரிவர்த்தனை சேர்",
+    "Add Bill": "பில் சேர்",
+    "Add Task": "பணி சேர்",
+    "Add Goal": "இலக்கு சேர்",
+    "Add Note": "குறிப்பு சேர்",
+    "Add Contact": "தொடர்பு சேர்",
+    "Add Appointment": "சந்திப்பு சேர்",
+    "Add Asset": "சொத்து சேர்",
+    "Add Document": "ஆவணம் சேர்",
+    "Add Password": "கடவுச்சொல் சேர்",
+    "Status": "நிலை",
+    "Action": "செயல்",
+    "Actions": "செயல்கள்",
+    "Category": "வகை",
+    "Amount": "தொகை",
+    "Date": "தேதி",
+    "All": "அனைத்தும்",
+    "Filter": "வடிகட்டு",
+    "Close": "மூடு",
+
+    // Footer
+    "LifeLedger AI — Personal Life Intelligence Dashboard.": "LifeLedger AI — தனிநபர் வாழ்க்கை நுண்ணறிவு டாஷ்போர்டு."
+  },
+
+  hi: {
+    // Navigation
+    "Dashboard": "डैशबोर्ड",
+    "Finance": "वित्त",
+    "Bills": "बिल",
+    "Health & Wellness": "स्वास्थ्य एवं कल्याण",
+    "Productivity": "कार्य एवं उत्पादकता",
+    "Tasks": "कार्य",
+    "Documents": "दस्तावेज़",
+    "Appointments": "नियुक्तियां",
+    "Goals": "लक्ष्य",
+    "Assets": "संपत्तियां",
+    "Notes & Journal": "नोट्स व डायरी",
+    "Contacts": "संपर्क",
+    "Password": "पासवर्ड",
+    "Balance Settings": "मासिक शेष इतिहास",
+
+    // Top Bar & Quick Entry
+    "Search across all modules...": "सभी मॉड्यूल में खोजें...",
+    "Search transactions, notes, goals...": "लेनदेन, नोट्स, लक्ष्य खोजें...",
+    "Tell LifeLedger what happened — it sorts the rest...": "LifeLedger को बताएं क्या हुआ — बाकी यह संभाल लेगा...",
+    "e.g. “Spent ₹450 on food today” or “Finish the ML assignment tomorrow”": "उदा. “आज खाने पर ₹450 खर्च किए” या “कल असाइनमेंट पूरा करें”",
+    "Add": "जोड़ें",
+    "Try:": "आज़माएं:",
+    "I spent ₹450 on food today": "मैंने आज भोजन पर ₹450 खर्च किए",
+    "Paid electricity bill ₹1,200": "बिजली बिल ₹1,200 का भुगतान किया",
+    "Received salary ₹85,000": "वेतन ₹85,000 प्राप्त हुआ",
+    "Doctor appointment next Friday at 11am": "अगले शुक्रवार सुबह 11 बजे डॉक्टर की नियुक्ति",
+    "Spent ₹450 on food today": "आज भोजन पर ₹450 खर्च किए",
+    "Click to view & edit profile": "प्रोफ़ाइल देखने व संपादित करने के लिए क्लिक करें",
+    "🔔 Urgent Alerts & Expiries": "🔔 आवश्यक अलर्ट और समाप्ति",
+    "No active alerts at present.": "वर्तमान में कोई सक्रिय अलर्ट नहीं है।",
+
+    // Dashboard View
+    "MONTHLY INCOME": "मासिक आय",
+    "MONTHLY EXPENSES": "मासिक व्यय",
+    "NET BALANCE": "शुद्ध शेष",
+    "Savings": "बचत",
+    "Spending by Category": "श्रेणी अनुसार व्यय",
+    "Total Expenses": "कुल व्यय",
+    "Income vs Expenses": "आय बनाम व्यय",
+    "Cashflow Comparison": "नकदी प्रवाह तुलना",
+    "Income": "आय",
+    "Expenses": "व्यय",
+    "Upcoming": "आगामी",
+    "Bills and appointments scheduled": "बिल और नियुक्तियां निर्धारित",
+    "items": "मदें",
+    "AI Insights": "AI अंतर्दृष्टि",
+    "Generated from your current data": "आपके वर्तमान डेटा से उत्पन्न",
+    "Goals in Progress": "प्रगति में लक्ष्य",
+    "active goals": "सक्रिय लक्ष्य",
+    "Clean Slate!": "नई शुरुआत!",
+    "Log your first expense, income, bill, or task above to generate personalized AI insights.": "व्यक्तिगत AI अंतर्दृष्टि प्राप्त करने के लिए ऊपर अपना पहला खर्च, आय, बिल या कार्य दर्ज करें।",
+    "No upcoming items yet. Log a bill or appointment above!": "कोई आगामी मद नहीं। ऊपर बिल या अपॉइंटमेंट दर्ज करें!",
+    "No goals created yet. Add one in the Goals tab!": "अभी तक कोई लक्ष्य नहीं बनाया गया। लक्ष्य टैब में जोड़ें!",
+    "goals active in your tracker": "लक्ष्य ट्रैकर में सक्रिय हैं",
+    "Due": "देय",
+    "Due Soon": "शीघ्र देय",
+
+    // Dedicated Monthly Balance History View
+    "← Back to Dashboard": "← डैशबोर्ड पर वापस जाएं",
+    "Monthly Balance History": "मासिक शेष इतिहास",
+    "Current Active Month": "वर्तमान सक्रिय माह",
+    "(Current Active Month)": "(वर्तमान सक्रिय माह)",
+    "Actively tracking daily transactions. Finalizes into balance history after month ends.": "दैनिक लेनदेन सक्रिय रूप से ट्रैक हो रहे हैं। माह समाप्त होने पर इतिहास में दर्ज होंगे।",
+    "Dashboard Savings": "डैशबोर्ड बचत",
+    "Carried From Prev Month": "पिछले महीने से लाया गया",
+    "Current Logged Income": "वर्तमान दर्ज आय",
+    "Current Logged Expenses": "वर्तमान दर्ज व्यय",
+    "Current Month Net Flow": "वर्तमान माह का शुद्ध प्रवाह",
+    "Completed Months' Balance History": "पूर्ण महीनों का शेष इतिहास",
+    "+ Record Older Month Balance": "+ पुराने महीने का शेष दर्ज करें",
+    "Record Balance for an Earlier Month": "पूर्व महीने का शेष दर्ज करें",
+    "Closing Balance": "समापन शेष",
+    "Edit Balance": "शेष संपादित करें",
+    "Reset": "रीसेट",
+    "Save": "सहेजें",
+    "Cancel": "रद्द करें",
+    "Save Record": "रिकॉर्ड सहेजें",
+    "No completed historical months recorded yet. As months conclude, their closing balances appear here automatically.": "कोई पूर्व पूर्ण महीने दर्ज नहीं हैं। माह समाप्त होने पर समापन शेष स्वतः यहाँ दिखाई देगा।",
+
+    // User Profile Modal
+    "User Profile & Account Session": "उपयोगकर्ता प्रोफ़ाइल और खाता सत्र",
+    "User Profile & Account": "उपयोगकर्ता प्रोफ़ाइल और खाता",
+    "View & update your profile and balance history": "अपनी प्रोफ़ाइल और शेष इतिहास देखें व अपडेट करें",
+    "Display Name *": "प्रदर्शित नाम *",
+    "Full Name": "पूरा नाम",
+    "Email Address (Account ID)": "ईमेल पता (खाता आईडी)",
+    "Registered Email": "पंजीकृत ईमेल",
+    "Phone Number": "फ़ोन नंबर",
+    "Bio / About User": "बायो / परिचय",
+    "Add information about yourself...": "अपने बारे में जानकारी जोड़ें...",
+    "View and track historical completed months": "ऐतिहासिक पूर्ण महीनों को देखें और ट्रैक करें",
+    "Open Records": "रिकॉर्ड खोलें",
+    "Report an Issue": "समस्या दर्ज करें",
+    "Facing a problem? Submit an issue report": "कोई समस्या आ रही है? रिपोर्ट सबमिट करें",
+    "Report Issue": "समस्या रिपोर्ट करें",
+    "Language / மொழி": "भाषा / Language",
+    "Account Session": "खाता सत्र",
+    "Sign out from this device securely": "इस डिवाइस से सुरक्षित रूप से लॉग आउट करें",
+    "Log out": "लॉग आउट",
+    "Save Profile": "प्रोफ़ाइल सहेजें",
+
+    // Report Issue Modal
+    "Submit issue details or feedback to support": "समर्थन को समस्या विवरण या फ़ीडबैक सबमिट करें",
+    "Issue Category *": "समस्या श्रेणी *",
+    "Issue Summary / Subject *": "समस्या सारांश / विषय *",
+    "Detailed Description *": "विस्तृत विवरण *",
+    "Submit Report": "रिपोर्ट सबमिट करें",
+
+    // Common Module Headers & Buttons
+    "Finance Overview": "वित्त अवलोकन",
+    "Total Income": "कुल आय",
+    "Net Savings": "शुद्ध बचत",
+    "Export CSV": "CSV निर्यात",
+    "+ Income": "+ आय",
+    "+ Expense": "+ व्यय",
+    "Add Transaction": "लेनदेन जोड़ें",
+    "Add Bill": "बिल जोड़ें",
+    "Add Task": "कार्य जोड़ें",
+    "Add Goal": "लक्ष्य जोड़ें",
+    "Add Note": "नोट जोड़ें",
+    "Add Contact": "संपर्क जोड़ें",
+    "Add Appointment": "अपॉइंटमेंट जोड़ें",
+    "Add Asset": "संपत्ति जोड़ें",
+    "Add Document": "दस्तावेज़ जोड़ें",
+    "Add Password": "पासवर्ड जोड़ें",
+    "Status": "स्थिति",
+    "Action": "कार्रवाई",
+    "Actions": "कार्रवाइयां",
+    "Category": "श्रेणी",
+    "Amount": "राशि",
+    "Date": "दिनांक",
+    "All": "सभी",
+    "Filter": "फ़िल्टर",
+    "Close": "बंद करें",
+
+    // Footer
+    "LifeLedger AI — Personal Life Intelligence Dashboard.": "LifeLedger AI — व्यक्तिगत जीवन इंटेलिजेंस डैशबोर्ड।"
+  },
+
+  ml: {
+    // Malayalam
+    "Dashboard": "ഡാഷ്‌ബോർഡ്",
+    "Finance": "ധനകാര്യം",
+    "Bills": "ബില്ലുകൾ",
+    "Health & Wellness": "ആരോഗ്യം",
+    "Productivity": "ജോലികൾ",
+    "Tasks": "ജോലികൾ",
+    "Documents": "രേഖകൾ",
+    "Appointments": "അപ്പോയിന്റ്മെന്റുകൾ",
+    "Goals": "ലക്ഷ്യങ്ങൾ",
+    "Assets": "ആസ്തികൾ",
+    "Notes & Journal": "കുറിപ്പുകൾ",
+    "Contacts": "കോൺടാക്റ്റുകൾ",
+    "Password": "പാസ്‌വേഡ്",
+    "Balance Settings": "പ്രതിമാസ ബാലൻസ് ചരിത്രം",
+
+    "Search across all modules...": "എല്ലാ മൊഡ്യൂളുകളിലും തിരയുക...",
+    "Search transactions, notes, goals...": "ഇടപാടുകൾ, കുറിപ്പുകൾ, ലക്ഷ്യങ്ങൾ തിരയുക...",
+    "Tell LifeLedger what happened — it sorts the rest...": "എന്തു സംഭവിച്ചുവെന്ന് പറയൂ — ബാക്കി ഇത് കൈകാര്യം ചെയ്യും...",
+    "e.g. “Spent ₹450 on food today” or “Finish the ML assignment tomorrow”": "ഉദാ: “ഇന്ന് ഭക്ഷണത്തിന് ₹450 ചെലവഴിച്ചു”",
+    "Add": "ചേർക്കുക",
+    "Try:": "ശ്രമിക്കുക:",
+    "I spent ₹450 on food today": "ഇന്ന് ഭക്ഷണത്തിന് ₹450 ചെലവഴിച്ചു",
+    "Paid electricity bill ₹1,200": "വൈദ്യുതി ബിൽ ₹1,200 അടച്ചു",
+    "Received salary ₹85,000": "ശമ്പളം ₹85,000 ലഭിച്ചു",
+    "Doctor appointment next Friday at 11am": "അടുത്ത വെള്ളിയാഴ്ച 11 മണിക്ക് ഡോക്ടർ സന്ദർശനം",
+    "Spent ₹450 on food today": "ഇന്ന് ഭക്ഷണത്തിന് ₹450 ചെലവഴിച്ചു",
+    "Click to view & edit profile": "പ്രൊഫൈൽ കാണാനും തിരുത്താനും ക്ലിക്ക് ചെയ്യുക",
+    "🔔 Urgent Alerts & Expiries": "🔔 പ്രധാന അലേർട്ടുകൾ",
+    "No active alerts at present.": "നിലവിൽ അലേർട്ടുകൾ ഒന്നുമില്ല.",
+
+    "MONTHLY INCOME": "പ്രതിമാസ വരുമാനം",
+    "MONTHLY EXPENSES": "പ്രതിമാസ ചെലവുകൾ",
+    "NET BALANCE": "അറ്റ ബാലൻസ്",
+    "Savings": "സമ്പാദ്യം",
+    "Spending by Category": "വിഭാഗം തിരിച്ചുള്ള ചെലവ്",
+    "Total Expenses": "ആകെ ചെലവുകൾ",
+    "Income vs Expenses": "വരുമാനവും ചെലവും",
+    "Cashflow Comparison": "ക്യാഷ്ഫ്ലോ താരതമ്യം",
+    "Income": "വരുമാനം",
+    "Expenses": "ചെലവുകൾ",
+    "Upcoming": "വരാനിരിക്കുന്നവ",
+    "Bills and appointments scheduled": "ബില്ലുകളും അപ്പോയിന്റ്മെന്റുകളും",
+    "items": "ഇനങ്ങൾ",
+    "AI Insights": "AI ഉൾക്കാഴ്ചകൾ",
+    "Generated from your current data": "നിങ്ങളുടെ ഡാറ്റയിൽ നിന്ന് രൂപപ്പെടുത്തിയത്",
+    "Goals in Progress": "പുരോഗതിയിലുള്ള ലക്ഷ്യങ്ങൾ",
+    "active goals": "സജീവ ലക്ഷ്യങ്ങൾ",
+    "Clean Slate!": "പുതിയ തുടക്കം!",
+    "Log your first expense, income, bill, or task above to generate personalized AI insights.": "നിങ്ങളുടെ ആദ്യ ചെലവോ വരുമാനമോ മുകളിൽ രേഖപ്പെടുത്തുക.",
+    "No upcoming items yet. Log a bill or appointment above!": "വരാനിരിക്കുന്ന ഇനങ്ങളൊന്നുമില്ല.",
+    "No goals created yet. Add one in the Goals tab!": "ലക്ഷ്യങ്ങൾ ചേർത്തിട്ടില്ല.",
+    "goals active in your tracker": "സജീവ ലക്ഷ്യങ്ങൾ",
+    "Due": "അവസാന തീയതി",
+    "Due Soon": "ഉടൻ നൽകണം",
+
+    "← Back to Dashboard": "← ഡാഷ്‌ബോർഡിലേക്ക് മടങ്ങുക",
+    "Monthly Balance History": "പ്രതിമാസ ബാലൻസ് ചരിത്രം",
+    "Current Active Month": "നടപ്പ് മാസം",
+    "(Current Active Month)": "(നടപ്പ് മാസം)",
+    "Actively tracking daily transactions. Finalizes into balance history after month ends.": "മാസം അവസാനിച്ച ശേഷം ബാലൻസ് ചരിത്രത്തിൽ രേഖപ്പെടുത്തും.",
+    "Dashboard Savings": "ഡാഷ്‌ബോർഡ് സമ്പാദ്യം",
+    "Carried From Prev Month": "മുൻ മാസത്തിൽ നിന്ന്",
+    "Current Logged Income": "നിലവിലെ വരുമാനം",
+    "Current Logged Expenses": "നിലവിലെ ചെലവ്",
+    "Current Month Net Flow": "ഈ മാസത്തെ അറ്റ ബാലൻസ്",
+    "Completed Months' Balance History": "കഴിഞ്ഞ മാസങ്ങളുടെ ബാലൻസ് ചരിത്രം",
+    "+ Record Older Month Balance": "+ പഴയ മാസത്തെ ബാലൻസ് ചേർക്കുക",
+    "Record Balance for an Earlier Month": "മുൻ മാസത്തെ ബാലൻസ് ചേർക്കുക",
+    "Closing Balance": "അവസാന ബാലൻസ്",
+    "Edit Balance": "ബാലൻസ് മാറ്റുക",
+    "Reset": "റീസെറ്റ്",
+    "Save": "സംരക്ഷിക്കുക",
+    "Cancel": "റദ്ദാക്കുക",
+    "Save Record": "സൂക്ഷിക്കുക",
+    "No completed historical months recorded yet. As months conclude, their closing balances appear here automatically.": "പൂർത്തിയായ മാസങ്ങളൊന്നും ഇതുവരെ രേഖപ്പെടുത്തിയിട്ടില്ല.",
+
+    "User Profile & Account Session": "ഉപയോക്തൃ പ്രൊഫൈൽ & സെഷൻ",
+    "User Profile & Account": "ഉപയോക്തൃ പ്രൊഫൈൽ",
+    "View & update your profile and balance history": "പ്രൊഫൈലും ബാലൻസും കാണുക",
+    "Display Name *": "പേര് *",
+    "Full Name": "പൂർണ്ണമായ പേര്",
+    "Email Address (Account ID)": "ഇമെയിൽ വിലാസം",
+    "Registered Email": "രജിസ്റ്റർ ചെയ്ത ഇമെയിൽ",
+    "Phone Number": "ഫോൺ നമ്പർ",
+    "Bio / About User": "വിവരണം",
+    "Add information about yourself...": "വിവരങ്ങൾ ചേർക്കുക...",
+    "View and track historical completed months": "മുൻകാല ചരിത്രം കാണുക",
+    "Open Records": "തുറക്കുക",
+    "Report an Issue": "പ്രശ്നം റിപ്പോർട്ട് ചെയ്യുക",
+    "Facing a problem? Submit an issue report": "പ്രശ്നം റിപ്പോർട്ട് ചെയ്യുക",
+    "Report Issue": "റിപ്പോർട്ട് ചെയ്യുക",
+    "Language / மொழி": "ഭാഷ / Language",
+    "Account Session": "അക്കൗണ്ട് സെഷൻ",
+    "Sign out from this device securely": "സുരക്ഷിതമായി ലോഗ് ഔട്ട് ചെയ്യുക",
+    "Log out": "ലോഗ് ഔട്ട്",
+    "Save Profile": "പ്രൊഫൈൽ സംരക്ഷിക്കുക",
+
+    "Submit issue details or feedback to support": "വിവരങ്ങൾ അയക്കുക",
+    "Issue Category *": "വിഭാഗം *",
+    "Issue Summary / Subject *": "വിഷയം *",
+    "Detailed Description *": "വിശദീകരണം *",
+    "Submit Report": "റിപ്പോർട്ട് അയക്കുക",
+
+    "Finance Overview": "ധനകാര്യ അവലോകനം",
+    "Total Income": "ആകെ വരുമാനം",
+    "Net Savings": "അറ്റ സമ്പാദ്യം",
+    "Export CSV": "CSV എക്‌സ്‌പോർട്ട്",
+    "+ Income": "+ വരുമാനം",
+    "+ Expense": "+ ചെലവ്",
+    "Add Transaction": "ഇടപാട് ചേർക്കുക",
+    "Add Bill": "ബിൽ ചേർക്കുക",
+    "Add Task": "ജോലി ചേർക്കുക",
+    "Add Goal": "ലക്ഷ്യം ചേർക്കുക",
+    "Add Note": "കുറിപ്പ് ചേർക്കുക",
+    "Add Contact": "കോൺടാക്റ്റ് ചേർക്കുക",
+    "Add Appointment": "അപ്പോയിന്റ്മെന്റ് ചേർക്കുക",
+    "Add Asset": "ആസ്തി ചേർക്കുക",
+    "Add Document": "രേഖ ചേർക്കുക",
+    "Add Password": "പാസ്‌വേഡ് ചേർക്കുക",
+    "Status": "സ്ഥിതി",
+    "Action": "നടപടി",
+    "Actions": "നടപടികൾ",
+    "Category": "വിഭാഗം",
+    "Amount": "തുക",
+    "Date": "തീയതി",
+    "All": "എല്ലാം",
+    "Filter": "ഫിൽട്ടർ",
+    "Close": "അടയ്ക്കുക",
+
+    "LifeLedger AI — Personal Life Intelligence Dashboard.": "LifeLedger AI — വ്യക്തിഗത ലൈഫ് ഇന്റലിജൻസ് ഡാഷ്‌ബോർഡ്."
+  },
+
+  te: {
+    // Telugu
+    "Dashboard": "డాష్‌బోర్డ్",
+    "Finance": "ఆర్థికం",
+    "Bills": "బిల్లులు",
+    "Health & Wellness": "ఆరోగ్యం",
+    "Productivity": "పనులు",
+    "Tasks": "పనులు",
+    "Documents": "పత్రాలు",
+    "Appointments": "అపాయింట్‌మెంట్‌లు",
+    "Goals": "లక్ష్యాలు",
+    "Assets": "ఆస్తులు",
+    "Notes & Journal": "గమనికలు",
+    "Contacts": "పరిచయాలు",
+    "Password": "పాస్‌వర్డ్",
+    "Balance Settings": "నెలవారీ బ్యాలెన్స్ చరిత్ర",
+
+    "Search across all modules...": "అన్ని మాడ్యూళ్ళలో శోధించండి...",
+    "Search transactions, notes, goals...": "లావాదేవీలు, గమనికలు, లక్ష్యాలు శోధించండి...",
+    "Tell LifeLedger what happened — it sorts the rest...": "ఏమి జరిగిందో చెప్పండి — మిగిలినది ఇది చూసుకుంటుంది...",
+    "e.g. “Spent ₹450 on food today” or “Finish the ML assignment tomorrow”": "ఉదా. “ఈరోజు ఆహారానికి ₹450 ఖర్చు చేసాను”",
+    "Add": "జోడించు",
+    "Try:": "ప్రయత్నించండి:",
+    "I spent ₹450 on food today": "ఈరోజు ఆహారానికి ₹450 ఖర్చు చేసాను",
+    "Paid electricity bill ₹1,200": "విద్యుత్ బిల్లు ₹1,200 చెల్లించాను",
+    "Received salary ₹85,000": "జీతం ₹85,000 అందింది",
+    "Doctor appointment next Friday at 11am": "వచ్చే శుక్రవారం ఉదయం 11 గంటలకు డాక్టర్ అపాయింట్‌మెంట్",
+    "Spent ₹450 on food today": "ఈరోజు ఆహారానికి ₹450 ఖర్చు చేసాను",
+    "Click to view & edit profile": "ప్రొఫైల్ చూడటానికి మరియు సవరించడానికి క్లిక్ చేయండి",
+    "🔔 Urgent Alerts & Expiries": "🔔 ముఖ్యమైన హెచ్చరికలు",
+    "No active alerts at present.": "ప్రస్తుతం ఏ హెచ్చరికలు లేవు.",
+
+    "MONTHLY INCOME": "నెలవారీ ఆదాయం",
+    "MONTHLY EXPENSES": "నెలవారీ ఖర్చులు",
+    "NET BALANCE": "నికర నిల్వ",
+    "Savings": "పొదుపు",
+    "Spending by Category": "వర్గం వారీగా ఖర్చులు",
+    "Total Expenses": "మొత్తం ఖర్చులు",
+    "Income vs Expenses": "ఆదాయం వర్సెస్ ఖర్చులు",
+    "Cashflow Comparison": "నగదు ప్రవాహ పోలిక",
+    "Income": "ఆదాయం",
+    "Expenses": "ఖర్చులు",
+    "Upcoming": "రాబోయేవి",
+    "Bills and appointments scheduled": "షెడ్యూల్ చేసిన బిల్లులు మరియు అపాయింట్‌మెంట్‌లు",
+    "items": "అంశాలు",
+    "AI Insights": "AI అంతర్దృష్టులు",
+    "Generated from your current data": "మీ ప్రస్తుత డేటా నుండి రూపొందించబడింది",
+    "Goals in Progress": "పురోగతిలో ఉన్న లక్ష్యాలు",
+    "active goals": "క్రియాశీల లక్ష్యాలు",
+    "Clean Slate!": "కొత్త ప్రారంభం!",
+    "Log your first expense, income, bill, or task above to generate personalized AI insights.": "వ్యక్తిగతీకరించిన AI అంతర్దృష్టులను పొందడానికి మీ మొదటి ఖర్చు లేదా ఆదాయాన్ని నమోదు చేయండి.",
+    "No upcoming items yet. Log a bill or appointment above!": "రాబోయే అంశాలు ఏవీ లేవు.",
+    "No goals created yet. Add one in the Goals tab!": "లక్ష్యాలు ఏవీ సృష్టించబడలేదు.",
+    "goals active in your tracker": "లక్ష్యాలు క్రియాశీలంగా ఉన్నాయి",
+    "Due": "గడువు",
+    "Due Soon": "త్వరలో చెల్లించాలి",
+
+    "← Back to Dashboard": "← డాష్‌బోర్డ్‌కు తిరిగి వెళ్ళు",
+    "Monthly Balance History": "నెలవారీ బ్యాలెన్స్ చరిత్ర",
+    "Current Active Month": "ప్రస్తుత నెల",
+    "(Current Active Month)": "(ప్రస్తుత నెల)",
+    "Actively tracking daily transactions. Finalizes into balance history after month ends.": "నెల ముగిసిన తర్వాత బ్యాలెన్స్ చరిత్రలో నమోదు చేయబడుతుంది.",
+    "Dashboard Savings": "డాష్‌బోర్డ్ పొదుపు",
+    "Carried From Prev Month": "గత నెల నుండి బ్యాలెన్స్",
+    "Current Logged Income": "నమోదైన ఆదాయం",
+    "Current Logged Expenses": "నమోదైన ఖర్చులు",
+    "Current Month Net Flow": "ఈ నెల నికర బ్యాలెన్స్",
+    "Completed Months' Balance History": "గత నెలల బ్యాలెన్స్ చరిత్ర",
+    "+ Record Older Month Balance": "+ పాత నెల బ్యాలెన్స్ నమోదు చేయండి",
+    "Record Balance for an Earlier Month": "మునుపటి నెల బ్యాలెన్స్ నమోదు చేయండి",
+    "Closing Balance": "ముగింపు బ్యాలెన్స్",
+    "Edit Balance": "బ్యాలెన్స్ సవరించండి",
+    "Reset": "రీసెట్",
+    "Save": "భద్రపరచు",
+    "Cancel": "రద్దు చేయి",
+    "Save Record": "రికార్డును సేవ్ చేయి",
+    "No completed historical months recorded yet. As months conclude, their closing balances appear here automatically.": "పూర్తయిన నెలలేవీ ఇంకా నమోదు కాలేదు.",
+
+    "User Profile & Account Session": "యూజర్ ప్రొఫైల్ మరియు సెషన్",
+    "User Profile & Account": "యూజర్ ప్రొఫైల్",
+    "View & update your profile and balance history": "ప్రొఫైల్ మరియు బ్యాలెన్స్ చూడండి",
+    "Display Name *": "పేరు *",
+    "Full Name": "పూర్తి పేరు",
+    "Email Address (Account ID)": "ఈమెయిల్ చిరునామా",
+    "Registered Email": "నమోదిత ఈమెయిల్",
+    "Phone Number": "ఫోన్ నంబర్",
+    "Bio / About User": "వివరాలు",
+    "Add information about yourself...": "మీ గురించి వివరాలు రాయండి...",
+    "View and track historical completed months": "గత నెలల చరిత్రను చూడండి",
+    "Open Records": "తెరవండి",
+    "Report an Issue": "సమస్యను నివేదించండి",
+    "Facing a problem? Submit an issue report": "సమస్య ఉందా? నివేదికను పంపండి",
+    "Report Issue": "సమస్యను నివేదించు",
+    "Language / மொழி": "భాష / Language",
+    "Account Session": "ఖాతా సెషన్",
+    "Sign out from this device securely": "సురక్షితంగా లాగ్ అవుట్ అవ్వండి",
+    "Log out": "లాగ్ అవుట్",
+    "Save Profile": "ప్రొఫైల్ భద్రపరచు",
+
+    "Submit issue details or feedback to support": "వివరాలు పంపండి",
+    "Issue Category *": "వర్గం *",
+    "Issue Summary / Subject *": "విషయం *",
+    "Detailed Description *": "వివరణ *",
+    "Submit Report": "నివేదిక పంపు",
+
+    "Finance Overview": "ఆర్థిక సమీక్ష",
+    "Total Income": "మొత్తం ఆదాయం",
+    "Net Savings": "నికర పొదుపు",
+    "Export CSV": "CSV ఎగుమతి",
+    "+ Income": "+ ఆదాయం",
+    "+ Expense": "+ ఖర్చు",
+    "Add Transaction": "లావాదేవీని జోడించు",
+    "Add Bill": "బిల్లును జోడించు",
+    "Add Task": "పనిని జోడించు",
+    "Add Goal": "లక్ష్యాన్ని జోడించు",
+    "Add Note": "గమనికను జోడించు",
+    "Add Contact": "పరిచయాన్ని జోడించు",
+    "Add Appointment": "అపాయింట్‌మెంట్‌ను జోడించు",
+    "Add Asset": "ఆస్తిని జోడించు",
+    "Add Document": "పత్రాన్ని జోడించు",
+    "Add Password": "పాస్‌వర్డ్‌ను జోడించు",
+    "Status": "స్థితి",
+    "Action": "చర్య",
+    "Actions": "చర్యలు",
+    "Category": "వర్గం",
+    "Amount": "మొత్తం",
+    "Date": "తేదీ",
+    "All": "అన్నీ",
+    "Filter": "ఫిల్టర్",
+    "Close": "మూసివేయి",
+
+    "LifeLedger AI — Personal Life Intelligence Dashboard.": "LifeLedger AI — వ్యక్తిగత లైఫ్ ఇంటెలిజెన్స్ డాష్‌బోర్డ్."
+  },
+
+  es: {
+    // Spanish
+    "Dashboard": "Panel",
+    "Finance": "Finanzas",
+    "Bills": "Facturas",
+    "Health & Wellness": "Salud y Bienestar",
+    "Productivity": "Productividad",
+    "Tasks": "Tareas",
+    "Documents": "Documentos",
+    "Appointments": "Citas",
+    "Goals": "Metas",
+    "Assets": "Activos",
+    "Notes & Journal": "Notas",
+    "Contacts": "Contactos",
+    "Password": "Contraseña",
+    "Balance Settings": "Historial de Saldo",
+
+    "Search across all modules...": "Buscar en todos los módulos...",
+    "Search transactions, notes, goals...": "Buscar transacciones, notas, metas...",
+    "Tell LifeLedger what happened — it sorts the rest...": "Dile a LifeLedger qué pasó — se encarga del resto...",
+    "e.g. “Spent ₹450 on food today” or “Finish the ML assignment tomorrow”": "ej. “Gasté ₹450 en comida hoy”",
+    "Add": "Añadir",
+    "Try:": "Probar:",
+    "I spent ₹450 on food today": "Gasté ₹450 en comida hoy",
+    "Paid electricity bill ₹1,200": "Pagué factura de luz ₹1,200",
+    "Received salary ₹85,000": "Salario recibido ₹85,000",
+    "Doctor appointment next Friday at 11am": "Cita médica el próximo viernes a las 11am",
+    "Spent ₹450 on food today": "Gasté ₹450 en comida hoy",
+    "Click to view & edit profile": "Haz clic para ver y editar el perfil",
+    "🔔 Urgent Alerts & Expiries": "🔔 Alertas urgentes",
+    "No active alerts at present.": "No hay alertas activas en este momento.",
+
+    "MONTHLY INCOME": "INGRESOS MENSUALES",
+    "MONTHLY EXPENSES": "GASTOS MENSUALES",
+    "NET BALANCE": "BALANCE NETO",
+    "Savings": "Ahorros",
+    "Spending by Category": "Gastos por categoría",
+    "Total Expenses": "Gastos totales",
+    "Income vs Expenses": "Ingresos vs Gastos",
+    "Cashflow Comparison": "Comparación de flujo de caja",
+    "Income": "Ingresos",
+    "Expenses": "Gastos",
+    "Upcoming": "Próximos",
+    "Bills and appointments scheduled": "Facturas y citas programadas",
+    "items": "elementos",
+    "AI Insights": "Perspectivas de IA",
+    "Generated from your current data": "Generado a partir de tus datos",
+    "Goals in Progress": "Metas en progreso",
+    "active goals": "metas activas",
+    "Clean Slate!": "¡Comienzo limpio!",
+    "Log your first expense, income, bill, or task above to generate personalized AI insights.": "Registra tu primer gasto o ingreso arriba para generar información de IA.",
+    "No upcoming items yet. Log a bill or appointment above!": "No hay eventos próximos.",
+    "No goals created yet. Add one in the Goals tab!": "Aún no se han creado metas.",
+    "goals active in your tracker": "metas activas",
+    "Due": "Vence",
+    "Due Soon": "Vence pronto",
+
+    "← Back to Dashboard": "← Volver al Panel",
+    "Monthly Balance History": "Historial de Saldo Mensual",
+    "Current Active Month": "Mes activo actual",
+    "(Current Active Month)": "(Mes activo actual)",
+    "Actively tracking daily transactions. Finalizes into balance history after month ends.": "Se finalizará en el historial de saldo al terminar el mes.",
+    "Dashboard Savings": "Ahorros del panel",
+    "Carried From Prev Month": "Arrastrado del mes anterior",
+    "Current Logged Income": "Ingresos registrados",
+    "Current Logged Expenses": "Gastos registrados",
+    "Current Month Net Flow": "Flujo neto del mes actual",
+    "Completed Months' Balance History": "Historial de saldos de meses cerrados",
+    "+ Record Older Month Balance": "+ Registrar saldo de mes anterior",
+    "Record Balance for an Earlier Month": "Registrar saldo de mes anterior",
+    "Closing Balance": "Saldo de cierre",
+    "Edit Balance": "Editar saldo",
+    "Reset": "Restablecer",
+    "Save": "Guardar",
+    "Cancel": "Cancelar",
+    "Save Record": "Guardar registro",
+    "No completed historical months recorded yet. As months conclude, their closing balances appear here automatically.": "Aún no hay meses históricos registrados.",
+
+    "User Profile & Account Session": "Perfil de usuario y sesión",
+    "User Profile & Account": "Perfil y cuenta",
+    "View & update your profile and balance history": "Ver y actualizar tu perfil e historial",
+    "Display Name *": "Nombre para mostrar *",
+    "Full Name": "Nombre completo",
+    "Email Address (Account ID)": "Correo electrónico",
+    "Registered Email": "Correo registrado",
+    "Phone Number": "Número de teléfono",
+    "Bio / About User": "Biografía / Acerca del usuario",
+    "Add information about yourself...": "Añade información sobre ti...",
+    "View and track historical completed months": "Ver y seguir meses completados",
+    "Open Records": "Abrir registros",
+    "Report an Issue": "Informar un problema",
+    "Facing a problem? Submit an issue report": "¿Tienes un problema? Envía un reporte",
+    "Report Issue": "Informar problema",
+    "Language / மொழி": "Idioma (Language)",
+    "Account Session": "Sesión de cuenta",
+    "Sign out from this device securely": "Cerrar sesión de forma segura",
+    "Log out": "Cerrar sesión",
+    "Save Profile": "Guardar perfil",
+
+    "Submit issue details or feedback to support": "Enviar detalles al soporte",
+    "Issue Category *": "Categoría *",
+    "Issue Summary / Subject *": "Asunto *",
+    "Detailed Description *": "Descripción detallada *",
+    "Submit Report": "Enviar reporte",
+
+    "Finance Overview": "Resumen financiero",
+    "Total Income": "Ingresos totales",
+    "Net Savings": "Ahorros netos",
+    "Export CSV": "Exportar CSV",
+    "+ Income": "+ Ingreso",
+    "+ Expense": "+ Gasto",
+    "Add Transaction": "Añadir transacción",
+    "Add Bill": "Añadir factura",
+    "Add Task": "Añadir tarea",
+    "Add Goal": "Añadir meta",
+    "Add Note": "Añadir nota",
+    "Add Contact": "Añadir contacto",
+    "Add Appointment": "Añadir cita",
+    "Add Asset": "Añadir activo",
+    "Add Document": "Añadir documento",
+    "Add Password": "Añadir contraseña",
+    "Status": "Estado",
+    "Action": "Acción",
+    "Actions": "Acciones",
+    "Category": "Categoría",
+    "Amount": "Cantidad",
+    "Date": "Fecha",
+    "All": "Todo",
+    "Filter": "Filtrar",
+    "Close": "Cerrar",
+
+    "LifeLedger AI — Personal Life Intelligence Dashboard.": "LifeLedger AI — Panel de inteligencia de vida personal."
+  },
+
+  fr: {
+    // French
+    "Dashboard": "Tableau de bord",
+    "Finance": "Finances",
+    "Bills": "Factures",
+    "Health & Wellness": "Santé & Bien-être",
+    "Productivity": "Productivité",
+    "Tasks": "Tâches",
+    "Documents": "Documents",
+    "Appointments": "Rendez-vous",
+    "Goals": "Objectifs",
+    "Assets": "Actifs",
+    "Notes & Journal": "Notes & Journal",
+    "Contacts": "Contacts",
+    "Password": "Mot de passe",
+    "Balance Settings": "Historique du solde",
+
+    "Search across all modules...": "Rechercher dans tous les modules...",
+    "Search transactions, notes, goals...": "Rechercher transactions, notes, objectifs...",
+    "Tell LifeLedger what happened — it sorts the rest...": "Dites à LifeLedger ce qui s'est passé — il s'occupe du reste...",
+    "e.g. “Spent ₹450 on food today” or “Finish the ML assignment tomorrow”": "ex. “Dépensé ₹450 pour la nourriture aujourd'hui”",
+    "Add": "Ajouter",
+    "Try:": "Essayer :",
+    "I spent ₹450 on food today": "J'ai dépensé ₹450 pour la nourriture aujourd'hui",
+    "Paid electricity bill ₹1,200": "Facture d'électricité payée ₹1,200",
+    "Received salary ₹85,000": "Salaire reçu ₹85,000",
+    "Doctor appointment next Friday at 11am": "Rendez-vous chez le médecin vendredi prochain à 11h",
+    "Spent ₹450 on food today": "Dépensé ₹450 pour la nourriture aujourd'hui",
+    "Click to view & edit profile": "Cliquez pour voir et modifier le profil",
+    "🔔 Urgent Alerts & Expiries": "🔔 Alertes urgentes",
+    "No active alerts at present.": "Aucune alerte active actuellement.",
+
+    "MONTHLY INCOME": "REVENU MENSUEL",
+    "MONTHLY EXPENSES": "DÉPENSES MENSUELLES",
+    "NET BALANCE": "SOLDE NET",
+    "Savings": "Épargne",
+    "Spending by Category": "Dépenses par catégorie",
+    "Total Expenses": "Total des dépenses",
+    "Income vs Expenses": "Revenus vs Dépenses",
+    "Cashflow Comparison": "Comparaison des flux",
+    "Income": "Revenus",
+    "Expenses": "Dépenses",
+    "Upcoming": "À venir",
+    "Bills and appointments scheduled": "Factures et rendez-vous planifiés",
+    "items": "éléments",
+    "AI Insights": "Aperçus IA",
+    "Generated from your current data": "Généré à partir de vos données actuelles",
+    "Goals in Progress": "Objectifs en cours",
+    "active goals": "objectifs actifs",
+    "Clean Slate!": "Nouveau départ !",
+    "Log your first expense, income, bill, or task above to generate personalized AI insights.": "Enregistrez votre première dépense ou revenu ci-dessus.",
+    "No upcoming items yet. Log a bill or appointment above!": "Aucun élément à venir.",
+    "No goals created yet. Add one in the Goals tab!": "Aucun objectif créé pour l'instant.",
+    "goals active in your tracker": "objectifs actifs",
+    "Due": "Échéance",
+    "Due Soon": "Bientôt dû",
+
+    "← Back to Dashboard": "← Retour au Tableau de bord",
+    "Monthly Balance History": "Historique du solde mensuel",
+    "Current Active Month": "Mois actif en cours",
+    "(Current Active Month)": "(Mois actif en cours)",
+    "Actively tracking daily transactions. Finalizes into balance history after month ends.": "Finalisé dans l'historique du solde à la fin du mois.",
+    "Dashboard Savings": "Épargne du tableau de bord",
+    "Carried From Prev Month": "Reporté du mois précédent",
+    "Current Logged Income": "Revenus enregistrés",
+    "Current Logged Expenses": "Dépenses enregistrées",
+    "Current Month Net Flow": "Flux net du mois en cours",
+    "Completed Months' Balance History": "Historique des soldes des mois clôturés",
+    "+ Record Older Month Balance": "+ Enregistrer le solde d'un mois antérieur",
+    "Record Balance for an Earlier Month": "Enregistrer le solde d'un mois antérieur",
+    "Closing Balance": "Solde de clôture",
+    "Edit Balance": "Modifier le solde",
+    "Reset": "Réinitialiser",
+    "Save": "Enregistrer",
+    "Cancel": "Annuler",
+    "Save Record": "Sauvegarder",
+    "No completed historical months recorded yet. As months conclude, their closing balances appear here automatically.": "Aucun mois historique complété n'est encore enregistré.",
+
+    "User Profile & Account Session": "Profil utilisateur & session",
+    "User Profile & Account": "Profil & compte",
+    "View & update your profile and balance history": "Voir et mettre à jour le profil et l'historique",
+    "Display Name *": "Nom d'affichage *",
+    "Full Name": "Nom complet",
+    "Email Address (Account ID)": "Adresse e-mail",
+    "Registered Email": "E-mail enregistré",
+    "Phone Number": "Numéro de téléphone",
+    "Bio / About User": "Biographie / À propos",
+    "Add information about yourself...": "Ajoutez des informations sur vous...",
+    "View and track historical completed months": "Consulter l'historique des mois clôturés",
+    "Open Records": "Ouvrir les dossiers",
+    "Report an Issue": "Signaler un problème",
+    "Facing a problem? Submit an issue report": "Un problème ? Envoyez un rapport",
+    "Report Issue": "Signaler un problème",
+    "Language / மொழி": "Langue (Language)",
+    "Account Session": "Session de compte",
+    "Sign out from this device securely": "Se déconnecter en toute sécurité",
+    "Log out": "Se déconnecter",
+    "Save Profile": "Enregistrer le profil",
+
+    "Submit issue details or feedback to support": "Envoyer les détails au support",
+    "Issue Category *": "Catégorie *",
+    "Issue Summary / Subject *": "Objet *",
+    "Detailed Description *": "Description détaillée *",
+    "Submit Report": "Envoyer le rapport",
+
+    "Finance Overview": "Aperçu des finances",
+    "Total Income": "Revenu total",
+    "Net Savings": "Épargne nette",
+    "Export CSV": "Exporter en CSV",
+    "+ Income": "+ Revenu",
+    "+ Expense": "+ Dépense",
+    "Add Transaction": "Ajouter transaction",
+    "Add Bill": "Ajouter facture",
+    "Add Task": "Ajouter tâche",
+    "Add Goal": "Ajouter objectif",
+    "Add Note": "Ajouter note",
+    "Add Contact": "Ajouter contact",
+    "Add Appointment": "Ajouter rendez-vous",
+    "Add Asset": "Ajouter actif",
+    "Add Document": "Ajouter document",
+    "Add Password": "Ajouter mot de passe",
+    "Status": "Statut",
+    "Action": "Action",
+    "Actions": "Actions",
+    "Category": "Catégorie",
+    "Amount": "Montant",
+    "Date": "Date",
+    "All": "Tout",
+    "Filter": "Filtrer",
+    "Close": "Fermer",
+
+    "LifeLedger AI — Personal Life Intelligence Dashboard.": "LifeLedger AI — Tableau de bord d'intelligence de vie personnelle."
+  }
+};
+
+// Build comprehensive bidirectional lookup map
+const PHRASE_TO_KEY = {};
+Object.keys(TRANSLATIONS).forEach(lang => {
+  const dict = TRANSLATIONS[lang];
+  Object.keys(dict).forEach(k => {
+    const val = dict[k];
+    if (val) PHRASE_TO_KEY[val.trim()] = k;
+    PHRASE_TO_KEY[k.trim()] = k;
+  });
+});
+
+function t(key) {
+  if (TRANSLATIONS[currentLanguage] && TRANSLATIONS[currentLanguage][key]) {
+    return TRANSLATIONS[currentLanguage][key];
+  }
+  if (TRANSLATIONS.en && TRANSLATIONS.en[key]) {
+    return TRANSLATIONS.en[key];
+  }
+  return key;
+}
+
+function translateDomTextNodes(root) {
+  if (!root || typeof document === "undefined") return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+  let node;
+  while ((node = walker.nextNode())) {
+    if (!node.nodeValue) continue;
+    const trimmed = node.nodeValue.trim();
+    if (!trimmed) continue;
+    const key = PHRASE_TO_KEY[trimmed];
+    if (key) {
+      const translated = t(key);
+      if (translated && translated !== trimmed) {
+        node.nodeValue = node.nodeValue.replace(trimmed, translated);
+      }
+    }
+  }
+}
+
+function applyPageTranslations() {
+  if (typeof document === "undefined") return;
+
+  // 1. Static element text & attributes with data-i18n
+  document.querySelectorAll("[data-i18n]").forEach(el => {
+    const key = el.getAttribute("data-i18n");
+    if (key && (TRANSLATIONS.en[key] || PHRASE_TO_KEY[key])) {
+      const actualKey = PHRASE_TO_KEY[key] || key;
+      el.textContent = t(actualKey);
+    }
+  });
+
+  document.querySelectorAll("[data-i18n-placeholder]").forEach(el => {
+    const key = el.getAttribute("data-i18n-placeholder");
+    if (key && (TRANSLATIONS.en[key] || PHRASE_TO_KEY[key])) {
+      const actualKey = PHRASE_TO_KEY[key] || key;
+      el.placeholder = t(actualKey);
+    }
+  });
+
+  document.querySelectorAll("[data-i18n-title]").forEach(el => {
+    const key = el.getAttribute("data-i18n-title");
+    if (key && (TRANSLATIONS.en[key] || PHRASE_TO_KEY[key])) {
+      const actualKey = PHRASE_TO_KEY[key] || key;
+      el.title = t(actualKey);
+    }
+  });
+
+  // 2. Chip buttons
+  document.querySelectorAll(".chip-btn").forEach(btn => {
+    const chipKey = btn.getAttribute("data-chip-key") || btn.dataset.text;
+    if (chipKey) {
+      const actualKey = PHRASE_TO_KEY[chipKey] || chipKey;
+      const translated = t(actualKey);
+      btn.textContent = (actualKey === "Spent ₹450 on food today")
+        ? (currentLanguage === "ta" ? "இன்று உணவுக்கு ₹450 செலவழித்தேன்" : (currentLanguage === "en" ? "I spent ₹450 on food today" : translated))
+        : translated;
+      btn.dataset.text = translated;
+    }
+  });
+
+  // 3. Quick entry input placeholder
+  const nlInput = document.getElementById("nlInput");
+  if (nlInput) {
+    nlInput.placeholder = t('e.g. “Spent ₹450 on food today” or “Finish the ML assignment tomorrow”');
+  }
+
+  // 4. Update language select & currentLangLabel in profile modal
+  const langSelect = document.getElementById("userLanguageSelect");
+  if (langSelect) langSelect.value = currentLanguage || "en";
+  const langLabel = document.getElementById("currentLangLabel");
+  if (langLabel) {
+    const names = {
+      en: "English (Selected)",
+      ta: "தமிழ் (தேர்ந்தெடுக்கப்பட்டது)",
+      hi: "हिन्दी (चयनित)",
+      ml: "മലയാളം (തിരഞ്ഞെടുത്തു)",
+      te: "తెలుగు (ఎంపిక చేయబడింది)",
+      es: "Español (Seleccionado)",
+      fr: "Français (Sélectionné)"
+    };
+    langLabel.textContent = names[currentLanguage] || currentLanguage;
+  }
+
+  // 5. Walk DOM text nodes in #mainContent and modals for full-page coverage
+  translateDomTextNodes(document.getElementById("mainContent"));
+  translateDomTextNodes(document.getElementById("userProfileModal"));
+  translateDomTextNodes(document.getElementById("reportIssueModal"));
+}
+
+function changeLanguage(lang) {
+  currentLanguage = lang || "en";
+  localStorage.setItem("lifeleader_lang", currentLanguage);
+  applyPageTranslations();
+  renderNav();
+  renderMain();
+  if (typeof updateLiveDate === "function") updateLiveDate();
+
+  const toasts = {
+    ta: "மொழி வெற்றிகரமாக மாற்றப்பட்டது!",
+    hi: "भाषा सफलतापूर्वक बदली गई!",
+    ml: "ഭാഷ വിജയകരമായി മാറ്റി!",
+    te: "భాష విజయవంతంగా మార్చబడింది!",
+    es: "¡Idioma actualizado con éxito!",
+    fr: "Langue mise à jour avec succès!",
+    en: "Language updated successfully!"
+  };
+  showToast(toasts[currentLanguage] || "Language updated successfully!");
+}
+window.changeLanguage = changeLanguage;
+
 function renderNav() {
   const nav = document.getElementById("mainNav");
+  const quickEntry = document.querySelector(".quickentry");
+  if (!nav) return;
+
+  // In Monthly Balance History, do not show mainNav and quickentry
+  if (activeView === "Balance Settings" || activeView === "Settings") {
+    nav.style.display = "none";
+    if (quickEntry) quickEntry.style.display = "none";
+    return;
+  }
+  nav.style.display = "";
+  if (quickEntry) quickEntry.style.display = "";
+
   nav.innerHTML = views.map(v =>
-    `<button data-view="${v}" class="${v === activeView ? 'active' : ''}">${NAV_ICONS[v] || ''}<span>${v}</span></button>`
+    `<button data-view="${v}" class="${v === activeView ? 'active' : ''}">${NAV_ICONS[v] || ''}<span>${t(v)}</span></button>`
   ).join("");
   nav.querySelectorAll("button").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -1280,6 +2570,18 @@ function togglePasswordVisibility(id, realPassword) {
 
 function renderMain() {
   const main = document.getElementById("mainContent");
+  const nav = document.getElementById("mainNav");
+  const quickEntry = document.querySelector(".quickentry");
+
+  // In Monthly Balance History session, do not show the above session (mainNav and quickentry)
+  if (activeView === "Balance Settings" || activeView === "Settings") {
+    if (nav) nav.style.display = "none";
+    if (quickEntry) quickEntry.style.display = "none";
+  } else {
+    if (nav) nav.style.display = "";
+    if (quickEntry) quickEntry.style.display = "";
+  }
+
   if (activeView === "Dashboard") main.innerHTML = viewDashboard();
   else if (activeView === "Finance") main.innerHTML = viewFinance();
   else if (activeView === "Health & Wellness") main.innerHTML = viewHealthAndWellness();
@@ -1292,8 +2594,12 @@ function renderMain() {
   else if (activeView === "Notes & Journal") main.innerHTML = viewNotesAndJournal();
   else if (activeView === "Contacts") main.innerHTML = viewContacts();
   else if (activeView === "Password") main.innerHTML = viewPassword();
+  else if (activeView === "Balance Settings" || activeView === "Settings") main.innerHTML = viewBalanceSettings();
   attachHandlers();
   checkAlerts();
+  if (typeof applyPageTranslations === "function") {
+    applyPageTranslations();
+  }
 }
 
 /* ===== 1. DASHBOARD VIEW ===== */
@@ -1304,8 +2610,13 @@ function viewDashboard() {
 
   const inc = mIncList.reduce((s, i) => s + (i.amount || 0), 0);
   const exp = mExpList.reduce((s, e) => s + (e.amount || 0), 0);
-  const bal = inc - exp;
+  const incomeExp = totalIncomeExpenseForMonth(currentMonth);
+  const savingsExp = totalSavingsExpenseForMonth(currentMonth);
+  const bal = getMonthlyBalance(currentMonth);
   const cats = categoryTotalsForMonth(currentMonth);
+
+  // Monthly savings with last month balance rollover
+  const savingsData = getMonthlySavingsData(currentMonth);
 
   const activeGoals = (state.goals || []).filter(g => !g.completed);
   const totalSaved = (state.goals || []).reduce((s, g) => s + (g.current || 0), 0);
@@ -1313,8 +2624,15 @@ function viewDashboard() {
   const targetPct = totalTarget > 0 ? Math.round((totalSaved / totalTarget) * 100) : 0;
 
   const insights = [];
-  if (exp > 0 && inc > 0 && exp > inc) {
-    insights.push({ kind: "warn", title: "Expenses exceed income", text: `Your spending (${fmt(exp)}) is higher than your logged income (${fmt(inc)}).` });
+  if (savingsData.lastMonthBalance > 0) {
+    insights.push({
+      kind: "good",
+      title: `Last Month Surplus Saved (${fmt(savingsData.lastMonthBalance)})`,
+      text: `Your remaining balance of ${fmt(savingsData.lastMonthBalance)} from ${savingsData.prevMonthLabel} was rolled into your savings for ${getMonthYearLabel(currentMonth)}.`
+    });
+  }
+  if (incomeExp > 0 && inc > 0 && incomeExp > inc) {
+    insights.push({ kind: "warn", title: "Expenses exceed income", text: `Your spending from income (${fmt(incomeExp)}) is higher than your logged income (${fmt(inc)}).` });
   } else if (inc > 0) {
     const rate = Math.round((bal / inc) * 100);
     insights.push({ kind: "good", title: "Within monthly income target", text: `${fmt(bal)} remaining after expenses — ${rate}% savings rate.` });
@@ -1338,36 +2656,44 @@ function viewDashboard() {
         <div class="sb-icon">↙</div>
         <div class="sb-delta">${inc > 0 ? 'Active' : '0%'}</div>
       </div>
-      <div class="sb-label">MONTHLY INCOME</div>
+      <div class="sb-label">${t('MONTHLY INCOME')}</div>
       <div class="sb-value num">${fmt(inc)}</div>
-      <div class="sb-sub">${mIncList.length} ${mIncList.length === 1 ? 'record' : 'records'} logged</div>
     </div>
     <div class="stat-block c-red">
       <div class="sb-top">
         <div class="sb-icon">↗</div>
-        <div class="sb-delta">${inc > 0 ? Math.round((exp / inc) * 100) + '%' : '0%'}</div>
+        <div class="sb-delta">${inc > 0 ? Math.round((incomeExp / inc) * 100) + '%' : '0%'}</div>
       </div>
-      <div class="sb-label">MONTHLY EXPENSES</div>
-      <div class="sb-value num">${fmt(exp)}</div>
-      <div class="sb-sub">${inc > 0 ? Math.round((exp / inc) * 100) + '% of income' : 'No income logged'}</div>
+      <div class="sb-label">${t('MONTHLY EXPENSES')}</div>
+      <div class="sb-value num">${fmt(incomeExp)}</div>
+      ${savingsExp > 0 ? `<div style="font-size:10.5px; color:#4f46e5; font-weight:600; margin-top:2px;">+${fmt(savingsExp)} from savings</div>` : ''}
     </div>
     <div class="stat-block c-indigo">
       <div class="sb-top">
         <div class="sb-icon">💳</div>
         <div class="sb-delta">${inc > 0 ? Math.round((bal / inc) * 100) + '%' : '0%'}</div>
       </div>
-      <div class="sb-label">NET BALANCE</div>
+      <div class="sb-label">${t('NET BALANCE')}</div>
       <div class="sb-value num">${fmt(bal)}</div>
-      <div class="sb-sub">${bal >= 0 ? 'Surplus balance' : 'Deficit balance'}</div>
     </div>
-    <div class="stat-block c-gold">
+    <div class="stat-block c-gold" style="cursor: pointer;" onclick="goToBalanceSettingsPage()" title="${t('Click to view & manage Monthly Balance History')}">
       <div class="sb-top">
-        <div class="sb-icon">🐖</div>
-        <div class="sb-delta">${targetPct}%</div>
+        <div class="sb-icon">🏦</div>
+        ${savingsData.allTimeSavingsExp > 0 ? 
+          `<div class="sb-delta" style="background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; font-weight: 700; padding: 2px 8px; border-radius: 12px; font-size: 11px;">-${fmt(savingsData.allTimeSavingsExp)} spent</div>` : 
+          (savingsData.lastMonthBalance > 0 ? `<div class="sb-delta" style="font-size: 11px;">Active</div>` : '')}
       </div>
-      <div class="sb-label">SAVINGS GOAL</div>
-      <div class="sb-value num">${fmt(totalSaved)}</div>
-      <div class="sb-sub">${totalTarget > 0 ? `${targetPct}% of ${fmt(totalTarget)} target` : 'Set a goal in Goals tab'}</div>
+      <div class="sb-label">${t('Dashboard Savings')}</div>
+      <div class="sb-value num">${fmt(savingsData.totalSavings)}</div>
+      ${savingsData.allTimeSavingsExp > 0 ? `
+        <div style="font-size: 11.5px; font-weight: 600; color: #92400e; margin-top: 4px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap;">
+          <span style="color: #dc2626; font-weight: 700;">-${fmt(savingsData.allTimeSavingsExp)}</span> spent • <span style="color: #059669; font-weight: 700;">${fmt(savingsData.totalSavings)}</span> balance
+        </div>
+      ` : (savingsData.lastMonthBalance > 0 ? `
+        <div style="font-size: 11.5px; font-weight: 600; color: #92400e; margin-top: 4px;">
+          +${fmt(savingsData.lastMonthBalance)} from prev month
+        </div>
+      ` : '')}
     </div>
   </div>
 
@@ -1376,8 +2702,8 @@ function viewDashboard() {
     <div class="card">
       <div class="card-header">
         <div>
-          <h2>Spending by Category</h2>
-          <div class="sub">Total Expenses: ${fmt(exp)}</div>
+          <h2>${t('Spending by Category')}</h2>
+          <div class="sub">${t('Total Expenses')}: ${fmt(exp)}</div>
         </div>
       </div>
       ${buildDonutChart(cats)}
@@ -1386,12 +2712,12 @@ function viewDashboard() {
     <div class="card bar-chart-card">
       <div class="card-header">
         <div>
-          <h2>Income vs Expenses</h2>
-          <div class="sub">Cashflow Comparison (${getMonthYearLabel(currentMonth)})</div>
+          <h2>${t('Income vs Expenses')}</h2>
+          <div class="sub">${t('Cashflow Comparison')} (${getMonthYearLabel(currentMonth)})</div>
         </div>
         <div class="chart-legend">
-          <span><span class="legend-dot" style="background:#00a86b"></span>Income</span>
-          <span><span class="legend-dot" style="background:#dc2626"></span>Expenses</span>
+          <span><span class="legend-dot" style="background:#00a86b"></span>${t('Income')}</span>
+          <span><span class="legend-dot" style="background:#dc2626"></span>${t('Expenses')}</span>
         </div>
       </div>
       ${buildDualBarChart(currentMonth)}
@@ -1404,10 +2730,10 @@ function viewDashboard() {
     <div class="card">
       <div class="card-header">
         <div>
-          <h2>Upcoming</h2>
-          <div class="sub">Bills and appointments scheduled</div>
+          <h2>${t('Upcoming')}</h2>
+          <div class="sub">${t('Bills and appointments scheduled')}</div>
         </div>
-        <span class="status-badge upcoming-badge">${totalUpcoming} items</span>
+        <span class="status-badge upcoming-badge">${totalUpcoming} ${t('items')}</span>
       </div>
       <div class="upcoming-list">
         ${upcomingBills.map(b => `
@@ -1454,8 +2780,8 @@ function viewDashboard() {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.6 4.9L18.5 9.5l-4.9 1.6L12 16l-1.6-4.9L5.5 9.5l4.9-1.6L12 3z"/></svg>
           </div>
           <div>
-            <h2>AI Insights</h2>
-            <div class="sub">Generated from your current data</div>
+            <h2>${t('AI Insights')}</h2>
+            <div class="sub">${t('Generated from your current data')}</div>
           </div>
         </div>
       </div>
@@ -1480,8 +2806,8 @@ function viewDashboard() {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
           </div>
           <div>
-            <h2>Goals in Progress</h2>
-            <div class="sub">${activeGoals.length} active goals</div>
+            <h2>${t('Goals in Progress')}</h2>
+            <div class="sub">${activeGoals.length} ${t('active goals')}</div>
           </div>
         </div>
       </div>
@@ -1510,7 +2836,7 @@ function viewDashboard() {
         ${(state.goals || []).length > 0 ? `
           <div class="goals-status-banner">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
-            <span>${activeGoals.length} goals active in your tracker</span>
+            <span>${activeGoals.length} ${t('goals active in your tracker')}</span>
           </div>` : ''}
       </div>
     </div>
@@ -1528,6 +2854,7 @@ function renderTxTableRows(expList, incList, currentMonth) {
       category: e.category || 'Other',
       catClass: (e.category || 'Other').split(' ')[0],
       amount: e.amount || 0,
+      paidFrom: e.paidFrom || 'income',
       id: e.id
     });
   });
@@ -1569,12 +2896,15 @@ function renderTxTableRows(expList, incList, currentMonth) {
           <td class="num">${item.date}</td>
           <td style="font-weight:600; color:#0f172a;">${item.desc}</td>
           <td><span class="cat-badge ${item.catClass}">${item.category}</span></td>
-          <td><span class="type-pill expense">Expense</span></td>
+          <td>
+            <span class="type-pill expense">Expense</span>
+            ${item.paidFrom === 'savings' ? `<span class="type-pill" style="background:#eef2ff; color:#4f46e5; border:1px solid #c7d2fe; margin-left:4px; font-size:10.5px; font-weight:700;">🏦 Savings</span>` : ''}
+          </td>
           <td style="text-align:right;" class="amt-neg">-${fmt(item.amount)}</td>
           <td style="text-align:center; white-space:nowrap;">
             <div class="action-btn-group" style="justify-content: center;">
-              <button type="button" class="action-btn edit-btn" onclick="openEditExpenseModal('${item.id}')" title="Edit Expense">✏️ Edit</button>
-              <button type="button" class="action-btn danger-btn" onclick="deleteExpense('${item.id}')" title="Delete Expense">🗑️ Delete</button>
+              <button type="button" class="action-btn edit-btn" onclick="openEditExpenseModal('${item.id}')" title="Edit Expense">Edit</button>
+              <button type="button" class="action-btn danger-btn" onclick="deleteExpense('${item.id}')" title="Delete Expense">Delete</button>
             </div>
           </td>
         </tr>
@@ -1589,8 +2919,8 @@ function renderTxTableRows(expList, incList, currentMonth) {
           <td style="text-align:right;" class="amt-pos">+${fmt(item.amount)}</td>
           <td style="text-align:center; white-space:nowrap;">
             <div class="action-btn-group" style="justify-content: center;">
-              <button type="button" class="action-btn edit-btn" onclick="openEditIncomeModal('${item.id}')" title="Edit Income">✏️ Edit</button>
-              <button type="button" class="action-btn danger-btn" onclick="deleteIncome('${item.id}')" title="Delete Income">🗑️ Delete</button>
+              <button type="button" class="action-btn edit-btn" onclick="openEditIncomeModal('${item.id}')" title="Edit Income">Edit</button>
+              <button type="button" class="action-btn danger-btn" onclick="deleteIncome('${item.id}')" title="Delete Income">Delete</button>
             </div>
           </td>
         </tr>
@@ -1609,6 +2939,7 @@ function renderDashboardTxRows(expList, incList) {
       category: e.category || 'Other',
       catClass: (e.category || 'Other').split(' ')[0],
       amount: e.amount || 0,
+      paidFrom: e.paidFrom || 'income',
       id: e.id
     });
   });
@@ -1649,12 +2980,15 @@ function renderDashboardTxRows(expList, incList) {
           <td class="num">${item.date}</td>
           <td style="font-weight:600; color:#0f172a;">${item.desc}</td>
           <td><span class="cat-badge ${item.catClass}">${item.category}</span></td>
-          <td><span class="type-pill expense">Expense</span></td>
+          <td>
+            <span class="type-pill expense">Expense</span>
+            ${item.paidFrom === 'savings' ? `<span class="type-pill" style="background:#eef2ff; color:#4f46e5; border:1px solid #c7d2fe; margin-left:4px; font-size:10.5px; font-weight:700;">🏦 Savings</span>` : ''}
+          </td>
           <td style="text-align:right;" class="amt-neg">-${fmt(item.amount)}</td>
           <td style="text-align:center; white-space:nowrap;">
             <div class="action-btn-group" style="justify-content: center;">
-              <button type="button" class="action-btn edit-btn" onclick="openEditExpenseModal('${item.id}')" title="Edit Expense">✏️ Edit</button>
-              <button type="button" class="action-btn danger-btn" onclick="deleteExpense('${item.id}')" title="Delete Expense">🗑️ Delete</button>
+              <button type="button" class="action-btn edit-btn" onclick="openEditExpenseModal('${item.id}')" title="Edit Expense">Edit</button>
+              <button type="button" class="action-btn danger-btn" onclick="deleteExpense('${item.id}')" title="Delete Expense">Delete</button>
             </div>
           </td>
         </tr>
@@ -1669,8 +3003,8 @@ function renderDashboardTxRows(expList, incList) {
           <td style="text-align:right;" class="amt-pos">+${fmt(item.amount)}</td>
           <td style="text-align:center; white-space:nowrap;">
             <div class="action-btn-group" style="justify-content: center;">
-              <button type="button" class="action-btn edit-btn" onclick="openEditIncomeModal('${item.id}')" title="Edit Income">✏️ Edit</button>
-              <button type="button" class="action-btn danger-btn" onclick="deleteIncome('${item.id}')" title="Delete Income">🗑️ Delete</button>
+              <button type="button" class="action-btn edit-btn" onclick="openEditIncomeModal('${item.id}')" title="Edit Income">Edit</button>
+              <button type="button" class="action-btn danger-btn" onclick="deleteIncome('${item.id}')" title="Delete Income">Delete</button>
             </div>
           </td>
         </tr>
@@ -1695,7 +3029,9 @@ function viewFinance() {
 
   const inc = mIncList.reduce((s, i) => s + (i.amount || 0), 0);
   const exp = mExpList.reduce((s, e) => s + (e.amount || 0), 0);
-  const bal = inc - exp;
+  const incomeExp = totalIncomeExpenseForMonth(currentMonth);
+  const savingsExp = totalSavingsExpenseForMonth(currentMonth);
+  const bal = getMonthlyBalance(currentMonth);
   const cats = categoryTotalsForMonth(currentMonth);
 
   return `
@@ -1733,20 +3069,20 @@ function viewFinance() {
 
     <div class="soft-stat-block red">
       <div class="ss-top">
-        <span class="ss-label">Total Expenses</span>
+        <span class="ss-label">Expenses (Income)</span>
         <div class="ss-icon">↗</div>
       </div>
-      <div class="ss-value num">${fmt(exp)}</div>
-      <div class="ss-sub">${mExpList.length} expense records</div>
+      <div class="ss-value num">${fmt(incomeExp)}</div>
+      <div class="ss-sub">${mExpList.filter(e => (e.paidFrom || 'income') === 'income').length} operating records${savingsExp > 0 ? ` (+${fmt(savingsExp)} from savings)` : ''}</div>
     </div>
 
     <div class="soft-stat-block blue">
       <div class="ss-top">
-        <span class="ss-label">Net Savings</span>
+        <span class="ss-label">Net Balance</span>
         <div class="ss-icon">💳</div>
       </div>
       <div class="ss-value num">${fmt(bal)}</div>
-      <div class="ss-sub">${inc > 0 ? Math.round((bal / inc) * 100) + '% savings rate' : 'No income'}</div>
+      <div class="ss-sub">${bal >= 0 ? 'Surplus balance' : 'Deficit balance'}</div>
     </div>
 
     <div class="soft-stat-block yellow">
@@ -1974,10 +3310,12 @@ function getMonthYearKey(dateStr) {
 }
 
 function getMonthYearLabel(monthYearKey) {
-  if (!monthYearKey || !monthYearKey.includes("-")) return "Current Month";
+  if (!monthYearKey || !monthYearKey.includes("-")) return (typeof t === "function" ? t("Current Month") : "Current Month");
   const [yyyy, mm] = monthYearKey.split("-");
   const date = new Date(parseInt(yyyy, 10), parseInt(mm, 10) - 1, 1);
-  return date.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const localeMap = { en: 'en-US', ta: 'ta-IN', hi: 'hi-IN', ml: 'ml-IN', te: 'te-IN', es: 'es-ES', fr: 'fr-FR' };
+  const loc = (typeof currentLanguage !== "undefined" && localeMap[currentLanguage]) ? localeMap[currentLanguage] : 'en-US';
+  return date.toLocaleDateString(loc, { month: "long", year: "numeric" });
 }
 
 function getAvailableBillMonthYears() {
@@ -2166,6 +3504,135 @@ function toggleEditRecurringFrequency(checked) {
   if (wrap) wrap.style.display = checked ? "block" : "none";
 }
 
+function onBillFundSourceChange(formPrefix, source) {
+  const incomeRadio = document.getElementById(`${formPrefix}BillFundIncome`);
+  const savingsRadio = document.getElementById(`${formPrefix}BillFundSavings`);
+  const incomeLabel = document.getElementById(`${formPrefix}BillFundIncomeLabel`);
+  const savingsLabel = document.getElementById(`${formPrefix}BillFundSavingsLabel`);
+
+  if (source === "savings") {
+    if (savingsRadio) savingsRadio.checked = true;
+    if (savingsLabel) {
+      savingsLabel.style.borderColor = "#6366f1";
+      savingsLabel.style.background = "#eef2ff";
+    }
+    if (incomeLabel) {
+      incomeLabel.style.borderColor = "var(--border-color)";
+      incomeLabel.style.background = "#ffffff";
+    }
+  } else {
+    if (incomeRadio) incomeRadio.checked = true;
+    if (incomeLabel) {
+      incomeLabel.style.borderColor = "#6366f1";
+      incomeLabel.style.background = "#eef2ff";
+    }
+    if (savingsLabel) {
+      savingsLabel.style.borderColor = "var(--border-color)";
+      savingsLabel.style.background = "#ffffff";
+    }
+  }
+}
+
+function onTxFundSourceChange(source) {
+  const incomeRadio = document.getElementById("txFundIncome");
+  const savingsRadio = document.getElementById("txFundSavings");
+  const incomeLabel = document.getElementById("txFundIncomeLabel");
+  const savingsLabel = document.getElementById("txFundSavingsLabel");
+
+  if (source === "savings") {
+    if (savingsRadio) savingsRadio.checked = true;
+    if (savingsLabel) {
+      savingsLabel.classList.add("active-expense");
+      savingsLabel.classList.remove("active-income");
+    }
+    if (incomeLabel) {
+      incomeLabel.classList.remove("active-income");
+      incomeLabel.classList.remove("active-expense");
+    }
+  } else {
+    if (incomeRadio) incomeRadio.checked = true;
+    if (incomeLabel) {
+      incomeLabel.classList.add("active-income");
+      incomeLabel.classList.remove("active-expense");
+    }
+    if (savingsLabel) {
+      savingsLabel.classList.remove("active-income");
+      savingsLabel.classList.remove("active-expense");
+    }
+  }
+}
+
+function openPaySourceModal({ title, billName, amount, incomeAvail, savingsAvail, prevMonthLabel, onConfirm }) {
+  let modal = document.getElementById("paySourcePromptModal");
+  if (!modal) {
+    modal = document.createElement("div");
+    modal.id = "paySourcePromptModal";
+    modal.className = "doc-modal-overlay";
+    document.body.appendChild(modal);
+  }
+
+  modal.innerHTML = `
+    <div class="doc-modal-container" style="max-width: 440px; padding: 24px; border-radius: 20px; text-align: left;">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; border-bottom: 1px solid var(--border-color); padding-bottom: 12px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <div style="width: 38px; height: 38px; border-radius: 10px; background: linear-gradient(135deg, #6366f1, #4f46e5); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 18px;">💳</div>
+          <div>
+            <h3 style="font-size: 16px; font-weight: 800; color: #0f172a; margin: 0;">${title || 'Select Payment Source'}</h3>
+            <div style="font-size: 12px; color: var(--text-muted);">${billName ? escapeHtml(billName) + ' • ' : ''}${fmt(amount)}</div>
+          </div>
+        </div>
+        <button type="button" class="doc-modal-close" onclick="document.getElementById('paySourcePromptModal').style.display='none'">&times;</button>
+      </div>
+
+      <p style="font-size: 13px; color: #475569; margin: 0 0 16px;">
+        Where would you like to deduct this bill amount from?
+      </p>
+
+      <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px;">
+        <label id="promptFundIncomeLabel" style="border: 2px solid #6366f1; background: #eef2ff; border-radius: 12px; padding: 12px 14px; cursor: pointer; display: flex; align-items: center; gap: 12px; transition: all 0.2s;">
+          <input type="radio" name="promptFundRadio" value="income" checked style="accent-color: #4f46e5;" onchange="
+            document.getElementById('promptFundIncomeLabel').style.borderColor='#6366f1';
+            document.getElementById('promptFundIncomeLabel').style.background='#eef2ff';
+            document.getElementById('promptFundSavingsLabel').style.borderColor='var(--border-color)';
+            document.getElementById('promptFundSavingsLabel').style.background='#ffffff';
+          ">
+          <div style="flex: 1;">
+            <div style="font-weight: 700; font-size: 13.5px; color: #1e1b4b;">💵 Current Month Income</div>
+            <div style="font-size: 11.5px; color: #4338ca;">Deduct from this month's earnings (${fmt(incomeAvail)} available)</div>
+          </div>
+        </label>
+
+        <label id="promptFundSavingsLabel" style="border: 2px solid var(--border-color); background: #fff; border-radius: 12px; padding: 12px 14px; cursor: pointer; display: flex; align-items: center; gap: 12px; transition: all 0.2s;">
+          <input type="radio" name="promptFundRadio" value="savings" style="accent-color: #4f46e5;" onchange="
+            document.getElementById('promptFundSavingsLabel').style.borderColor='#6366f1';
+            document.getElementById('promptFundSavingsLabel').style.background='#eef2ff';
+            document.getElementById('promptFundIncomeLabel').style.borderColor='var(--border-color)';
+            document.getElementById('promptFundIncomeLabel').style.background='#ffffff';
+          ">
+          <div style="flex: 1;">
+            <div style="font-weight: 700; font-size: 13.5px; color: #0f172a;">🏦 Savings (Rollover)</div>
+            <div style="font-size: 11.5px; color: var(--text-muted);">Deduct from previous month savings (${fmt(savingsAvail)} available)</div>
+          </div>
+        </label>
+      </div>
+
+      <div style="display: flex; gap: 10px; justify-content: flex-end;">
+        <button type="button" class="action-btn" onclick="document.getElementById('paySourcePromptModal').style.display='none'" style="padding: 9px 16px; border-radius: 8px;">Cancel</button>
+        <button type="button" id="promptConfirmBtn" style="background: linear-gradient(135deg, #6366f1, #4f46e5); color: #fff; border: none; padding: 9px 20px; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);">
+          Confirm & Pay
+        </button>
+      </div>
+    </div>
+  `;
+
+  modal.style.display = "flex";
+  document.getElementById("promptConfirmBtn").onclick = () => {
+    const selected = document.querySelector('input[name="promptFundRadio"]:checked')?.value || "income";
+    modal.style.display = "none";
+    if (typeof onConfirm === "function") onConfirm(selected);
+  };
+}
+
 function openAddBillModal() {
   pendingAddBillPdf = null;
   document.getElementById("addBillName").value = "";
@@ -2178,6 +3645,24 @@ function openAddBillModal() {
   document.getElementById("addBillRecurringType").value = "Monthly";
   toggleAddRecurringFrequency(false);
   clearAddBillPdf();
+
+  const currentMonth = selectedBillMonthYear || getCurrentFinanceMonthKey();
+  const savingsData = getMonthlySavingsData(currentMonth);
+  const isAfterOneMonth = hasPreviousMonthSavings(currentMonth);
+  const fundWrap = document.getElementById("addBillFundSourceWrap");
+  if (fundWrap) {
+    if (isAfterOneMonth) {
+      fundWrap.style.display = "block";
+      const incAvail = document.getElementById("addBillIncomeAvail");
+      const savAvail = document.getElementById("addBillSavingsAvail");
+      if (incAvail) incAvail.textContent = `${fmt(savingsData.currentInc)} monthly income`;
+      if (savAvail) savAvail.textContent = `${fmt(savingsData.lastMonthBalance)} from ${savingsData.prevMonthLabel}`;
+      onBillFundSourceChange("add", "income");
+    } else {
+      fundWrap.style.display = "none";
+    }
+  }
+
   document.getElementById("addBillModal").style.display = "flex";
 }
 
@@ -2195,6 +3680,8 @@ function saveAddBill(e) {
   const notes = document.getElementById("addBillNotes").value.trim();
   const recurring = document.getElementById("addBillRecurring").checked;
   const recurringType = document.getElementById("addBillRecurringType").value;
+  const fundRadio = document.querySelector('input[name="addBillFundSource"]:checked');
+  const paidFrom = fundRadio ? fundRadio.value : "income";
 
   if (!name || !amount || !due) {
     showToast("Please provide bill name, amount, and due date.");
@@ -2210,12 +3697,13 @@ function saveAddBill(e) {
     notes,
     recurring,
     recurringType,
+    paidFrom,
     pdfData: pendingAddBillPdf ? pendingAddBillPdf.pdfData : null,
     pdfFileName: pendingAddBillPdf ? pendingAddBillPdf.pdfFileName : null
   }).then(res => {
     closeAddBillModal();
     renderMain();
-    showToast(`Bill "${name}" added successfully!`);
+    showToast(`Bill "${name}" added successfully (${paidFrom === 'savings' ? 'from Savings' : 'from Income'})!`);
   });
 }
 
@@ -2233,6 +3721,23 @@ function openEditBillModal(id) {
   document.getElementById("editBillRecurring").checked = !!bill.recurring;
   document.getElementById("editBillRecurringType").value = bill.recurringType || "Monthly";
   toggleEditRecurringFrequency(!!bill.recurring);
+
+  const currentMonth = getMonthYearKey(bill.due) || getCurrentFinanceMonthKey();
+  const savingsData = getMonthlySavingsData(currentMonth);
+  const isAfterOneMonth = hasPreviousMonthSavings(currentMonth);
+  const fundWrap = document.getElementById("editBillFundSourceWrap");
+  if (fundWrap) {
+    if (isAfterOneMonth) {
+      fundWrap.style.display = "block";
+      const incAvail = document.getElementById("editBillIncomeAvail");
+      const savAvail = document.getElementById("editBillSavingsAvail");
+      if (incAvail) incAvail.textContent = `${fmt(savingsData.currentInc)} monthly income`;
+      if (savAvail) savAvail.textContent = `${fmt(savingsData.lastMonthBalance)} from ${savingsData.prevMonthLabel}`;
+      onBillFundSourceChange("edit", bill.paidFrom === "savings" ? "savings" : "income");
+    } else {
+      fundWrap.style.display = "none";
+    }
+  }
 
   if (bill.pdfData) {
     document.getElementById("editBillPdfPlaceholder").style.display = "none";
@@ -2261,6 +3766,8 @@ function saveEditBill(e) {
   const notes = document.getElementById("editBillNotes").value.trim();
   const recurring = document.getElementById("editBillRecurring").checked;
   const recurringType = document.getElementById("editBillRecurringType").value;
+  const fundRadio = document.querySelector('input[name="editBillFundSource"]:checked');
+  const paidFrom = fundRadio ? fundRadio.value : (state.bills.find(b=>b.id===id)?.paidFrom || "income");
 
   if (!name || !amount || !due) {
     showToast("Please enter bill name, amount, and due date");
@@ -2278,6 +3785,7 @@ function saveEditBill(e) {
     notes,
     recurring,
     recurringType,
+    paidFrom,
     paidDate: status === "Paid" ? (state.bills.find(b=>b.id===id)?.paidDate || new Date().toISOString().split("T")[0]) : null
   };
 
@@ -2309,10 +3817,38 @@ function deleteBill(id) {
 }
 
 function markBillAsPaid(id) {
-  BillsAPI.patchBillStatus(id, "Paid").then(res => {
-    renderMain();
-    showToast("Bill marked as Paid! Finance & Dashboard updated.");
-  });
+  const bill = state.bills.find(b => b.id === id);
+  if (!bill) return;
+
+  const currentKey = getCurrentFinanceMonthKey();
+  const savingsData = getMonthlySavingsData(currentKey);
+  const isAfterOneMonth = hasPreviousMonthSavings(currentKey);
+  const hasSavings = savingsData.totalSavings > 0 || isAfterOneMonth;
+
+  if (hasSavings) {
+    openPaySourceModal({
+      title: "Bill Payment Source",
+      billName: bill.name,
+      amount: bill.amount,
+      incomeAvail: savingsData.currentInc,
+      savingsAvail: savingsData.totalSavings,
+      prevMonthLabel: savingsData.prevMonthLabel,
+      onConfirm: (source) => {
+        bill.paidFrom = source;
+        bill.paidDate = new Date().toISOString().split("T")[0];
+        BillsAPI.patchBillStatus(id, "Paid").then(res => {
+          renderMain();
+          showToast(`Bill "${bill.name}" marked as Paid (funded from ${source === 'savings' ? 'Savings' : 'Income'})!`);
+        });
+      }
+    });
+  } else {
+    bill.paidDate = new Date().toISOString().split("T")[0];
+    BillsAPI.patchBillStatus(id, "Paid").then(res => {
+      renderMain();
+      showToast("Bill marked as Paid! Finance & Dashboard updated.");
+    });
+  }
 }
 
 function markBillAsUnpaid(id) {
@@ -2486,6 +4022,7 @@ const BillsAPI = {
       pdfFileName: billData.pdfFileName || null,
       recurring: !!billData.recurring,
       recurringType: billData.recurringType || "Monthly",
+      paidFrom: billData.paidFrom || "income",
       financeTransactionId: `bill_exp_${billId}`,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
@@ -2697,9 +4234,9 @@ function viewBills() {
   const categoryList = ["Electricity", "Water", "Internet", "Mobile", "Rent", "Credit Card", "Loan", "Insurance", "Subscription", "Education", "Medical", "Shopping", "Other"];
 
   return `
-  <!-- Bills Page Header & Dynamic Month Selector -->
+  <!-- Bills Page Header & Period Selector -->
   <div class="card" style="margin-bottom: 24px; background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);">
-    <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px; margin-bottom: 20px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;">
       <div>
         <div style="display: flex; align-items: center; gap: 10px;">
           <div style="width: 44px; height: 44px; border-radius: 14px; background: linear-gradient(135deg, #6366f1, #4f46e5); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 22px; box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);">🧾</div>
@@ -2710,26 +4247,11 @@ function viewBills() {
         </div>
       </div>
 
-      <button type="button" onclick="openAddBillModal()" style="display: inline-flex; align-items: center; gap: 8px; background: linear-gradient(135deg, #6366f1, #4f46e5); color: #fff; border: none; padding: 11px 22px; border-radius: 12px; font-size: 14px; font-weight: 700; cursor: pointer; box-shadow: 0 4px 14px rgba(79, 70, 229, 0.35); transition: all 0.2s ease;">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        <span>+ Add Bill</span>
-      </button>
-    </div>
-
-    <!-- Dynamic Month Selector Bar -->
-    <div class="bills-month-nav-bar">
-      <div class="month-stepper-wrap">
-        <button type="button" onclick="prevBillMonth()" title="Previous Month" class="month-nav-btn">&larr; Prev</button>
-        <div class="month-select-wrap">
-          <select id="billMonthSelect" onchange="changeBillMonthFilter(this.value)" style="padding: 8px 32px 8px 14px; border-radius: 8px; font-weight: 800; border: 1.5px solid #6366f1; background: #ffffff; color: #4f46e5; font-size: 14px; cursor: pointer; outline: none;">
-            ${availableMonths.map(m => `<option value="${m}" ${m === selectedBillMonthYear ? 'selected' : ''}>${getMonthYearLabel(m)} ${m === currentRealMonthKey ? ' (Current)' : ''}</option>`).join('')}
-          </select>
-        </div>
-        <button type="button" onclick="nextBillMonth()" title="Next Month" class="month-nav-btn">Next &rarr;</button>
-      </div>
-
-      <div class="current-month-btn-wrap">
-        <button type="button" onclick="goToCurrentBillMonth()" class="current-month-btn">📅 Current Month</button>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <label style="font-size: 12px; font-weight: 700; color: var(--text-muted);">Period:</label>
+        <select id="billMonthSelect" onchange="changeBillMonthFilter(this.value)" style="padding: 6px 12px; border-radius: 8px; font-weight: 700; border: 1px solid var(--border-color); background: #fff; font-size: 12.5px; color: #0f172a; cursor: pointer; outline: none;">
+          ${availableMonths.map(m => `<option value="${m}" ${m === selectedBillMonthYear ? 'selected' : ''}>${getMonthYearLabel(m)}</option>`).join('')}
+        </select>
       </div>
     </div>
   </div>
@@ -2815,6 +4337,7 @@ function viewBills() {
                 <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 3px;">
                   <span class="cat-pill">${escapeHtml(b.category || 'Utilities')}</span>
                   ${b.recurring ? `<span class="recurring-pill">🔁 ${b.recurringType || 'Monthly'}</span>` : ''}
+                  ${b.paidFrom === 'savings' ? `<span class="cat-pill" style="background:#eef2ff; color:#4f46e5; border:1px solid #c7d2fe; font-size:11px; font-weight:700;">🏦 From Savings</span>` : ''}
                 </div>
                 <h3 class="bill-card-title" title="${escapeHtml(b.name)}">${escapeHtml(b.name)}</h3>
               </div>
@@ -2859,8 +4382,8 @@ function viewBills() {
                 <span class="bill-pdf-name" title="${escapeHtml(b.pdfFileName || 'Bill_Invoice.pdf')}">${escapeHtml(b.pdfFileName || 'Bill_Invoice.pdf')}</span>
               </div>
               <div class="bill-pdf-actions">
-                <button type="button" onclick="openBillPdfModal(${b.id})" class="pdf-pill-btn view">👁️ View</button>
-                <a href="${b.pdfData}" download="${escapeHtml(b.pdfFileName || 'Bill_Invoice.pdf')}" class="pdf-pill-btn download">📥 Download</a>
+                <button type="button" onclick="openBillPdfModal(${b.id})" class="pdf-pill-btn view">View</button>
+                <a href="${b.pdfData}" download="${escapeHtml(b.pdfFileName || 'Bill_Invoice.pdf')}" class="pdf-pill-btn download">Download</a>
               </div>
             </div>` : ''}
 
@@ -2875,8 +4398,8 @@ function viewBills() {
             </div>
 
             <div style="display: flex; align-items: center; gap: 6px;">
-              <button type="button" onclick="openEditBillModal(${b.id})" class="bill-action-btn edit" title="Edit Bill">✏️ Edit</button>
-              <button type="button" onclick="deleteBill(${b.id})" class="bill-action-btn delete" title="Delete Bill">🗑 Delete</button>
+              <button type="button" onclick="openEditBillModal(${b.id})" class="bill-action-btn edit" title="Edit Bill">Edit</button>
+              <button type="button" onclick="deleteBill(${b.id})" class="bill-action-btn delete" title="Delete Bill">Delete</button>
             </div>
           </div>
         </div>
@@ -2942,14 +4465,14 @@ function viewBills() {
                 </td>
                 <td style="text-align:right;">
                   <div class="action-btn-group" style="justify-content: flex-end;">
-                    <button class="action-btn" onclick="openSubscriptionModal(${s.id})" title="Edit">✏️</button>
+                    <button class="action-btn" onclick="openSubscriptionModal(${s.id})" title="Edit">Edit</button>
                     ${s.status !== 'Cancelled' ? `
                       <button class="action-btn warning-btn" onclick="togglePauseSubscription(${s.id})" title="${s.status === 'Paused' ? 'Resume' : 'Pause'}">
                         ${s.status === 'Paused' ? '▶ Resume' : '⏸ Pause'}
                       </button>
                       <button class="action-btn warning-btn" onclick="cancelSubscription(${s.id})" title="Cancel">🚫 Cancel</button>
                     ` : ''}
-                    <button class="action-btn danger-btn" onclick="deleteSubscription(${s.id})" title="Delete">🗑</button>
+                    <button class="action-btn danger-btn" onclick="deleteSubscription(${s.id})" title="Delete">Delete</button>
                   </div>
                 </td>
               </tr>
@@ -2968,6 +4491,135 @@ function viewBills() {
 }
 
 /* ===== 5. DOCUMENTS VIEW ===== */
+let currentPreviewDoc = null;
+let currentDocZoom = 1.0;
+let currentDocRotate = 0;
+
+function zoomDocImg(delta) {
+  const img = document.getElementById("docPreviewImg");
+  const label = document.getElementById("docZoomLabel");
+  if (!img) return;
+  if (delta === 1.0) {
+    currentDocZoom = 1.0;
+  } else {
+    currentDocZoom = Math.min(3.5, Math.max(0.35, currentDocZoom * delta));
+  }
+  img.style.transform = `scale(${currentDocZoom}) rotate(${currentDocRotate}deg)`;
+  if (label) label.textContent = `${Math.round(currentDocZoom * 100)}%`;
+}
+
+function resetDocImgZoom() {
+  const img = document.getElementById("docPreviewImg");
+  const label = document.getElementById("docZoomLabel");
+  if (!img) return;
+  currentDocZoom = 1.0;
+  img.style.transform = `scale(1) rotate(${currentDocRotate}deg)`;
+  if (label) label.textContent = "100%";
+}
+
+function rotateDocImg() {
+  const img = document.getElementById("docPreviewImg");
+  if (!img) return;
+  currentDocRotate = (currentDocRotate + 90) % 360;
+  img.style.transform = `scale(${currentDocZoom}) rotate(${currentDocRotate}deg)`;
+}
+
+function printPreviewedDocument() {
+  if (!currentPreviewDoc || !currentPreviewDoc.fileData) {
+    showToast("No printable document content available.");
+    return;
+  }
+  const doc = currentPreviewDoc;
+  const isImg = doc.fileType && doc.fileType.includes("image");
+  const isPdf = doc.fileType && doc.fileType.includes("pdf");
+
+  const printWin = window.open('', '_blank');
+  if (!printWin) {
+    showToast("Please allow popups to print documents.");
+    return;
+  }
+
+  if (isImg) {
+    printWin.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>${escapeHtml(doc.name || 'Document')}</title>
+        <style>
+          @page { margin: 8mm; size: auto; }
+          body { margin: 0; padding: 10px; display: flex; justify-content: center; align-items: flex-start; background: #fff; font-family: sans-serif; }
+          img { max-width: 100%; height: auto; display: block; }
+        </style>
+      </head>
+      <body>
+        <img src="${doc.fileData}" onload="window.print(); window.close();" />
+      </body>
+      </html>
+    `);
+    printWin.document.close();
+  } else if (isPdf) {
+    printWin.location.href = doc.fileData;
+  } else {
+    printWin.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>${escapeHtml(doc.name || 'Document')}</title>
+        <style>
+          @page { margin: 15mm; }
+          body { font-family: 'Plus Jakarta Sans', Arial, sans-serif; line-height: 1.8; color: #1e293b; padding: 30px; font-size: 15px; }
+          h2 { border-bottom: 2px solid #0f172a; padding-bottom: 8px; margin-bottom: 16px; color: #0f172a; }
+          .meta { font-size: 13px; color: #64748b; margin-bottom: 24px; }
+          .content { font-family: inherit; white-space: pre-wrap; word-break: break-word; line-height: 1.9; }
+        </style>
+      </head>
+      <body>
+        <h2>${escapeHtml(doc.name || 'Document')}</h2>
+        <div class="meta">Type: ${escapeHtml(doc.documentType || 'Document')} • Date: ${escapeHtml(doc.date || 'Today')}</div>
+        <div class="content">${escapeHtml(doc.fileData || '')}</div>
+        <script>window.print();<\/script>
+      </body>
+      </html>
+    `);
+    printWin.document.close();
+  }
+}
+
+function openPreviewedDocInNewWindow(e) {
+  if (e && typeof e.preventDefault === 'function') e.preventDefault();
+  if (!currentPreviewDoc || !currentPreviewDoc.fileData) {
+    showToast("No document file available to open in new tab.");
+    return;
+  }
+  const doc = currentPreviewDoc;
+  const isImg = doc.fileType && doc.fileType.includes("image");
+  const win = window.open('', '_blank');
+  if (!win) {
+    showToast("Please allow popups to open full view.");
+    return;
+  }
+  if (isImg) {
+    win.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>${escapeHtml(doc.name || 'Document View')}</title>
+        <style>
+          body { margin: 0; background: #0f172a; display: flex; justify-content: center; align-items: flex-start; padding: 20px; }
+          img { max-width: 100%; height: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.6); border-radius: 6px; background: #fff; }
+        </style>
+      </head>
+      <body>
+        <img src="${doc.fileData}" alt="${escapeHtml(doc.name || 'Document')}" />
+      </body>
+      </html>
+    `);
+    win.document.close();
+  } else {
+    win.location.href = doc.fileData;
+  }
+}
+
 function viewDocuments() {
   if (!state.documents) state.documents = [];
 
@@ -2988,7 +4640,7 @@ function viewDocuments() {
       <div class="ss-sub">Local vault storage</div>
     </div>
     <div class="soft-stat-block yellow">
-      <div class="ss-top"><span class="ss-label">Uploaded Files</span><div class="ss-icon">📎</div></div>
+      <div class="ss-top"><span class="ss-label">Attached Files</span><div class="ss-icon">📎</div></div>
       <div class="ss-value num">${totalUploaded}</div>
       <div class="ss-sub">Files attached</div>
     </div>
@@ -3019,45 +4671,65 @@ function viewDocuments() {
 
     <!-- Document List -->
     <div class="upcoming-list" id="docListContainer">
-      ${filteredDocs.map(d => `
-        <div class="upcoming-row" style="padding: 14px 16px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
-          <div class="ur-left" style="display: flex; align-items: center; gap: 12px; flex: 1; min-width: 220px;">
-            <div class="ur-icon" style="background: #eef2ff; color: #4f46e5; width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0;">
-              ${d.fileData && d.fileType && d.fileType.includes("image") ? '🖼️' : d.fileType && d.fileType.includes("pdf") ? '📄' : '📁'}
+      ${filteredDocs.map(d => {
+        const isPdf = d.fileType && d.fileType.includes("pdf");
+        const isImg = d.fileData && d.fileType && d.fileType.includes("image");
+
+        let icon = '📁';
+        let iconBg = '#eef2ff';
+        let iconColor = '#4f46e5';
+        if (isPdf) {
+          icon = '📄';
+          iconBg = '#fee2e2';
+          iconColor = '#dc2626';
+        } else if (isImg) {
+          icon = '🖼️';
+          iconBg = '#e0f2fe';
+          iconColor = '#0284c7';
+        }
+
+        return `
+        <div class="upcoming-row" style="padding: 16px 18px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; background: #ffffff;">
+          <div class="ur-left" style="display: flex; align-items: center; gap: 14px; flex: 1; min-width: 240px;">
+            <div class="ur-icon" style="background: ${iconBg}; color: ${iconColor}; width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; box-shadow: 0 2px 6px rgba(0,0,0,0.06); border: 1px solid rgba(0,0,0,0.04);">
+              ${icon}
             </div>
             <div>
-              <div class="ur-title" style="font-weight: 700; color: #0f172a; font-size: 14px;">${escapeHtml(d.name || d.documentTitle)}</div>
-              <div class="ur-sub" style="font-size: 12px; color: var(--text-muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 2px;">
-                <span>Type: <strong style="color: #0f172a; font-weight: 700;">${escapeHtml(d.documentType || d.type || 'Other Document')}</strong></span>
-                <span style="background: #e0e7ff; color: #4338ca; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700;">${escapeHtml(d.category || 'Yours Document')}</span>
-                ${d.fileName ? `• <span style="color: #6366f1; font-weight: 600;">📎 ${escapeHtml(d.fileName)}</span>` : ''}
+              <div class="ur-title" style="font-weight: 800; color: #0f172a; font-size: 15px; letter-spacing: -0.2px;">${escapeHtml(d.name || d.documentTitle)}</div>
+              <div class="ur-sub" style="font-size: 12px; color: var(--text-muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 4px;">
+                <span>Type: <strong style="color: #0f172a; font-weight: 700;">${escapeHtml(d.documentType || d.type || 'Document')}</strong></span>
+                <span style="background: #e0e7ff; color: #4338ca; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 700;">${escapeHtml(d.category || 'Yours Document')}</span>
+                ${isPdf ? `<span style="background: #fee2e2; color: #991b1b; padding: 2px 6px; border-radius: 4px; font-size: 10.5px; font-weight: 700;">PDF</span>` : ''}
+                ${isImg ? `<span style="background: #e0f2fe; color: #0369a1; padding: 2px 6px; border-radius: 4px; font-size: 10.5px; font-weight: 700;">IMAGE</span>` : ''}
+                ${d.fileName ? `• <span style="color: #4f46e5; font-weight: 600;">📎 ${escapeHtml(d.fileName)}</span>` : ''}
               </div>
             </div>
           </div>
 
-          <div class="ur-right" style="display: flex; flex-direction: row; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap;">
-            <div style="text-align: right; margin-right: 4px;">
+          <div class="ur-right" style="display: flex; flex-direction: row; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap;">
+            <div style="text-align: right; margin-right: 6px;">
               <div class="ur-amt num" style="font-size: 12.5px; font-weight: 700; color: #334155; white-space: nowrap;">Uploaded: ${escapeHtml(d.date || 'Today')}</div>
             </div>
 
             <div class="doc-btn-group" style="display: flex; flex-direction: row; align-items: center; gap: 8px; flex-wrap: nowrap;">
-              <button type="button" onclick="previewDocument(${d.id})" class="pwd-card-btn" style="background: #eef2ff; color: #4f46e5; border: 1px solid #c7d2fe; padding: 6px 14px; border-radius: 8px; font-weight: 700; font-size: 12.5px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;" title="View Document Preview">
-                👁️ View
+              <button type="button" onclick="previewDocument(${d.id})" class="pwd-card-btn" style="background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; padding: 7px 15px; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; white-space: nowrap; box-shadow: 0 1px 3px rgba(79,70,229,0.1);" title="View Document Preview">
+                View
               </button>
 
               ${d.fileData ? `
-                <a href="${d.fileData}" download="${escapeHtml(d.fileName || d.name || d.documentTitle)}" class="pwd-card-btn" style="background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; padding: 6px 14px; border-radius: 8px; font-weight: 700; font-size: 12.5px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; text-decoration: none; white-space: nowrap;" title="Download File">
-                  📥 Download
+                <a href="${d.fileData}" download="${escapeHtml(d.fileName || d.name || d.documentTitle)}" class="pwd-card-btn" style="background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; padding: 7px 14px; border-radius: 8px; font-weight: 700; font-size: 12.5px; cursor: pointer; display: inline-flex; align-items: center; text-decoration: none; white-space: nowrap;" title="Download File">
+                  Download
                 </a>
               ` : ''}
 
-              <button type="button" onclick="deleteDocument(${d.id})" class="pwd-btn-danger" style="background: #fef2f2; color: #dc2626; border: 1px solid #fee2e2; padding: 6px 14px; border-radius: 8px; font-weight: 700; font-size: 12.5px; cursor: pointer; white-space: nowrap;" title="Delete Document">
-                🗑️ Delete
+              <button type="button" onclick="deleteDocument(${d.id})" class="pwd-btn-danger" style="background: #fef2f2; color: #dc2626; border: 1px solid #fee2e2; padding: 7px 14px; border-radius: 8px; font-weight: 700; font-size: 12.5px; cursor: pointer; white-space: nowrap;" title="Delete Document">
+                Delete
               </button>
             </div>
           </div>
         </div>
-      `).join("")}
+      `;
+      }).join("")}
 
       ${filteredDocs.length === 0 ? `
         <div style="padding: 35px 20px; text-align: center; color: var(--text-muted);">
@@ -3138,17 +4810,62 @@ function previewDocument(id) {
     return;
   }
 
+  currentPreviewDoc = doc;
+  currentDocZoom = 1.0;
+  currentDocRotate = 0;
+
   const modal = document.getElementById("docPreviewModal");
   const modalTitle = document.getElementById("docModalTitle");
   const modalSub = document.getElementById("docModalSub");
   const modalBody = document.getElementById("docModalBody");
+  const modalIcon = document.getElementById("docModalIcon");
   const dlBtn = document.getElementById("docModalDownloadBtn");
+  const controls = document.getElementById("docViewerControls");
+  const footerMeta = document.getElementById("docModalFooterMeta");
 
   if (!modal) return;
 
-  if (modalTitle) modalTitle.textContent = doc.name || doc.documentTitle;
-  if (modalSub) modalSub.textContent = `Category: ${doc.category || 'Yours Document'} • Type: ${doc.documentType || doc.type || 'Other Document'} • Uploaded: ${doc.date || 'Today'} ${doc.fileName ? '• 📎 ' + doc.fileName : ''}`;
+  const isImg = doc.fileData && doc.fileType && doc.fileType.includes("image");
+  const isPdf = doc.fileData && doc.fileType && doc.fileType.includes("pdf");
 
+  if (modalTitle) modalTitle.textContent = doc.name || doc.documentTitle;
+  if (modalSub) {
+    modalSub.textContent = `Category: ${doc.category || 'Yours Document'} • Type: ${doc.documentType || doc.type || 'Document'} • Uploaded: ${doc.date || 'Today'} ${doc.fileName ? '• 📎 ' + doc.fileName : ''}`;
+  }
+  if (modalIcon) {
+    modalIcon.textContent = isPdf ? "📄" : isImg ? "🖼️" : "📁";
+    modalIcon.style.background = isPdf ? "#fee2e2" : isImg ? "#e0f2fe" : "#eef2ff";
+    modalIcon.style.color = isPdf ? "#dc2626" : isImg ? "#0284c7" : "#4f46e5";
+  }
+
+  if (footerMeta) {
+    footerMeta.innerHTML = `<span style="color: #0f172a; font-weight: 700;">${escapeHtml(doc.documentType || 'Document')}</span> • ${isPdf ? 'PDF View' : isImg ? 'Image View (Zoomable)' : 'Document Vault'}`;
+  }
+
+  // Setup View Controls
+  if (controls) {
+    if (isImg) {
+      controls.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 5px; background: #f8fafc; padding: 3px 8px; border-radius: 8px; border: 1px solid var(--border-color);">
+          <button type="button" class="doc-zoom-btn" onclick="zoomDocImg(0.8)" title="Zoom Out">🔍 -</button>
+          <span id="docZoomLabel" style="font-size: 12px; font-weight: 800; color: #1e293b; min-width: 44px; text-align: center;">100%</span>
+          <button type="button" class="doc-zoom-btn" onclick="zoomDocImg(1.25)" title="Zoom In">🔍 +</button>
+          <button type="button" class="doc-zoom-btn" onclick="resetDocImgZoom()" title="Reset to standard width">Fit</button>
+          <button type="button" class="doc-zoom-btn" onclick="rotateDocImg()" title="Rotate 90 degrees">↺ 90°</button>
+        </div>
+      `;
+    } else if (isPdf) {
+      controls.innerHTML = `
+        <span style="font-size: 11.5px; font-weight: 700; color: #4338ca; background: #eef2ff; border: 1px solid #c7d2fe; padding: 5px 10px; border-radius: 6px;">
+          PDF Full Width Reader
+        </span>
+      `;
+    } else {
+      controls.innerHTML = "";
+    }
+  }
+
+  // Download Button Setup
   if (dlBtn) {
     if (doc.fileData) {
       dlBtn.href = doc.fileData;
@@ -3159,19 +4876,58 @@ function previewDocument(id) {
     }
   }
 
+  // Inject High-Definition Viewer Content
   if (doc.fileData) {
-    const isImg = doc.fileType && doc.fileType.includes("image");
     if (isImg) {
-      modalBody.innerHTML = `<img src="${doc.fileData}" alt="${escapeHtml(doc.name || doc.documentTitle)}" style="max-width: 100%; max-height: 65vh; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); object-fit: contain;">`;
+      modalBody.innerHTML = `
+        <div id="docImgViewport" style="overflow: auto; max-height: 72vh; width: 100%; display: flex; align-items: flex-start; justify-content: center; background: #0f172a; padding: 24px; box-sizing: border-box; border-radius: 12px;">
+          <img id="docPreviewImg" src="${doc.fileData}" alt="${escapeHtml(doc.name || doc.documentTitle)}" style="max-width: 100%; height: auto; transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1); transform-origin: top center; box-shadow: 0 15px 40px rgba(0,0,0,0.6); border-radius: 6px; background: #ffffff;" />
+        </div>
+      `;
+    } else if (isPdf) {
+      modalBody.innerHTML = `
+        <iframe id="docPdfIframe" src="${doc.fileData}#toolbar=1&navpanes=0&view=FitH" style="width: 100%; height: 75vh; border: none; border-radius: 12px; background: #525659; box-shadow: 0 10px 30px rgba(0,0,0,0.3);"></iframe>
+      `;
     } else {
-      modalBody.innerHTML = `<iframe src="${doc.fileData}" style="width: 100%; height: 65vh; border: none; border-radius: 8px; background: #fff;"></iframe>`;
+      let textContent = "";
+      if (doc.fileData.startsWith("data:text") || doc.fileData.startsWith("data:application/octet-stream")) {
+        try {
+          const b64 = doc.fileData.split(",")[1];
+          textContent = decodeURIComponent(escape(atob(b64)));
+        } catch (e) {
+          textContent = doc.fileData;
+        }
+      } else {
+        textContent = doc.fileData;
+      }
+
+      modalBody.innerHTML = `
+        <div style="width: 100%; max-height: 72vh; overflow-y: auto; background: #0f172a; padding: 24px; border-radius: 12px; box-sizing: border-box;">
+          <div class="doc-text-paper">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0f172a; padding-bottom: 16px; margin-bottom: 24px; flex-wrap: wrap; gap: 10px;">
+              <div>
+                <h2 style="font-size: 22px; font-weight: 800; color: #0f172a; margin: 0 0 6px 0;">${escapeHtml(doc.name || doc.documentTitle)}</h2>
+                <div style="font-size: 13px; color: #64748b;">${escapeHtml(doc.documentType || 'Document')} • ${escapeHtml(doc.category || 'Yours Document')}</div>
+              </div>
+              <div style="font-size: 13px; font-weight: 700; color: #475569; text-align: right;">
+                <div>Date: ${escapeHtml(doc.date || 'Today')}</div>
+                ${doc.fileName ? `<div style="font-size: 11.5px; color: #64748b; font-weight: 500;">📎 ${escapeHtml(doc.fileName)}</div>` : ''}
+              </div>
+            </div>
+            <div style="font-family: 'Plus Jakarta Sans', system-ui, sans-serif; font-size: 15px; color: #1e293b; line-height: 1.85; white-space: pre-wrap; word-break: break-word;">
+              ${escapeHtml(textContent)}
+            </div>
+          </div>
+        </div>
+      `;
     }
   } else {
     modalBody.innerHTML = `
-      <div style="background: #fff; padding: 40px; border-radius: 12px; text-align: center; max-width: 400px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
-        <div style="font-size: 48px; margin-bottom: 12px;">📁</div>
-        <h4 style="font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 6px;">${escapeHtml(doc.name || doc.documentTitle)}</h4>
-        <p style="font-size: 13px; color: #64748b;">No physical file was attached to this document record.</p>
+      <div style="background: #ffffff; padding: 48px 36px; border-radius: 16px; text-align: center; max-width: 440px; box-shadow: 0 10px 30px rgba(0,0,0,0.25);">
+        <div style="font-size: 52px; margin-bottom: 14px;">📁</div>
+        <h4 style="font-size: 18px; font-weight: 800; color: #0f172a; margin-bottom: 8px;">${escapeHtml(doc.name || doc.documentTitle)}</h4>
+        <p style="font-size: 13.5px; color: #64748b; line-height: 1.6; margin: 0 0 16px 0;">No file attachment was attached during creation. You can delete and re-upload this document with an image or PDF file.</p>
+        <button type="button" class="pwd-card-btn" onclick="closeDocModal()" style="padding: 8px 18px; border-radius: 8px; font-weight: 700;">OK</button>
       </div>`;
   }
 
@@ -3181,6 +4937,7 @@ function previewDocument(id) {
 function closeDocModal() {
   const modal = document.getElementById("docPreviewModal");
   if (modal) modal.style.display = "none";
+  currentPreviewDoc = null;
 }
 
 function deleteDocument(id) {
@@ -3263,10 +5020,10 @@ function viewAppointments() {
           <div class="ur-right" style="display: flex; flex-direction: row; align-items: center; gap: 8px;">
             <span class="status-badge upcoming">${escapeHtml(a.category || 'Personal')}</span>
             <button type="button" onclick="openEditApptModal(${a.id})" class="pwd-btn" style="background: #ffffff; color: #475569; border: 1px solid var(--border-color); padding: 6px 12px; border-radius: 8px; font-weight: 700; font-size: 12.5px; cursor: pointer;" title="Edit Appointment">
-              ✏️ Edit
+              Edit
             </button>
             <button type="button" onclick="deleteAppointment(${a.id})" class="pwd-btn-danger" style="background: #fef2f2; color: #dc2626; border: 1px solid #fee2e2; padding: 6px 12px; border-radius: 8px; font-weight: 700; font-size: 12.5px; cursor: pointer;" title="Delete Appointment">
-              🗑️ Delete
+              Delete
             </button>
           </div>
         </div>
@@ -3528,10 +5285,10 @@ function viewGoals() {
                     ✓ Mark as Finished
                   </button>` : `<span style="font-size:12.5px; font-weight:700; color:#16a34a; align-self:center;">Finished 🎉</span>`}
                 <button onclick="openEditGoalModal(${g.id})" style="background:#ffffff; color:#475569; border:1px solid var(--border-color); padding:6px 12px; border-radius:8px; font-weight:700; font-size:12.5px; cursor:pointer;" title="Edit Goal">
-                  ✏️ Edit
+                  Edit
                 </button>
                 <button onclick="deleteGoal(${g.id})" style="background:#fee2e2; color:#dc2626; border:1px solid #fecaca; padding:6px 14px; border-radius:8px; font-weight:700; font-size:12.5px; cursor:pointer;" title="Delete Goal">
-                  🗑️ Delete
+                  Delete
                 </button>
               </div>
             </div>
@@ -3634,6 +5391,32 @@ function populateTxCategories(type, selectedCat) {
   }
 }
 
+function updateTxFundSourceVisibility() {
+  const typeRadio = document.querySelector('input[name="txTypeRadio"]:checked');
+  const type = typeRadio ? typeRadio.value : "expense";
+  const fundWrap = document.getElementById("txFundSourceWrap");
+  if (!fundWrap) return;
+  if (type !== "expense") {
+    fundWrap.style.display = "none";
+    return;
+  }
+  const dateInput = document.getElementById("txDate");
+  const currentKey = getMonthYearKey(dateInput && dateInput.value ? dateInput.value : new Date().toISOString().split("T")[0]) || getCurrentFinanceMonthKey();
+  const isAfterOneMonth = hasPreviousMonthSavings(currentKey);
+  const savingsData = getMonthlySavingsData(currentKey);
+  const hasSavings = savingsData.totalSavings > 0 || isAfterOneMonth || savingsData.lastMonthBalance > 0;
+
+  if (hasSavings) {
+    fundWrap.style.display = "block";
+    const incAvail = document.getElementById("txFundIncomeAvail");
+    const savAvail = document.getElementById("txFundSavingsAvail");
+    if (incAvail) incAvail.textContent = `${fmt(savingsData.currentInc)} monthly income`;
+    if (savAvail) savAvail.textContent = `${fmt(savingsData.totalSavings)} savings balance available`;
+  } else {
+    fundWrap.style.display = "none";
+  }
+}
+
 function onTxTypeChange(type) {
   const incomeRadio = document.getElementById("txTypeIncome");
   const expenseRadio = document.getElementById("txTypeExpense");
@@ -3674,6 +5457,8 @@ function onTxTypeChange(type) {
     if (titleEl && !id) titleEl.textContent = "Add New Income";
     if (subEl && !id) subEl.textContent = "Record earnings, salary, or incoming funds";
     populateTxCategories("income");
+    const fundWrap = document.getElementById("txFundSourceWrap");
+    if (fundWrap) fundWrap.style.display = "none";
   } else {
     if (expenseRadio) expenseRadio.checked = true;
     if (expenseLabel) {
@@ -3702,6 +5487,7 @@ function onTxTypeChange(type) {
     if (titleEl && !id) titleEl.textContent = "Add New Expense";
     if (subEl && !id) subEl.textContent = "Record money spent with category and date";
     populateTxCategories("expense");
+    updateTxFundSourceVisibility();
   }
 }
 
@@ -3749,6 +5535,8 @@ function openAddExpenseModal() {
 
   onTxTypeChange("expense");
   populateTxCategories("expense", "Food & Dining");
+  onTxFundSourceChange("income");
+  updateTxFundSourceVisibility();
   modal.style.display = "flex";
   if (descEl) descEl.focus();
 }
@@ -3775,6 +5563,8 @@ function openEditExpenseModal(id) {
 
   onTxTypeChange("expense");
   populateTxCategories("expense", exp.category || "Food & Dining");
+  onTxFundSourceChange(exp.paidFrom === "savings" ? "savings" : "income");
+  updateTxFundSourceVisibility();
   modal.style.display = "flex";
   if (descEl) descEl.focus();
 }
@@ -3859,6 +5649,9 @@ function saveTxForm(e) {
     }
   } else {
     // Expense
+    const fundRadio = document.querySelector('input[name="txFundSource"]:checked');
+    const paidFrom = (fundRadio && fundRadio.value === "savings") ? "savings" : "income";
+
     if (id) {
       // If was previously in income, remove from income
       state.income = state.income.filter(x => String(x.id) !== String(id));
@@ -3869,6 +5662,7 @@ function saveTxForm(e) {
         existingExp.desc = desc;
         existingExp.category = category;
         existingExp.amount = amount;
+        existingExp.paidFrom = paidFrom;
 
         // If this expense is tied to a bill in state.bills, update the bill too so it doesn't get reverted!
         if (existingExp.sourceType === "bill" || existingExp.source === "bill" || existingExp.sourceId) {
@@ -3879,6 +5673,7 @@ function saveTxForm(e) {
             matchingBill.due = date;
             matchingBill.dueDate = date;
             matchingBill.category = category;
+            matchingBill.paidFrom = paidFrom;
             if (desc.startsWith("Bill: ")) {
               matchingBill.name = desc.substring(6).trim();
             } else {
@@ -3887,12 +5682,12 @@ function saveTxForm(e) {
           }
         }
       } else {
-        state.expenses.unshift({ id: Date.now(), date, desc, category, amount });
+        state.expenses.unshift({ id: Date.now(), date, desc, category, amount, paidFrom });
       }
-      showToast(`Expense of ₹${amount.toLocaleString('en-IN')} updated!`);
+      showToast(`Expense of ₹${amount.toLocaleString('en-IN')} updated (${paidFrom === 'savings' ? 'from Savings' : 'from Income'})!`);
     } else {
-      state.expenses.unshift({ id: Date.now(), date, desc, category, amount });
-      showToast(`Expense of ₹${amount.toLocaleString('en-IN')} added and synced!`);
+      state.expenses.unshift({ id: Date.now(), date, desc, category, amount, paidFrom });
+      showToast(`Expense of ₹${amount.toLocaleString('en-IN')} added (${paidFrom === 'savings' ? 'from Savings' : 'from Income'})!`);
     }
   }
 
@@ -3944,6 +5739,15 @@ window.closeIncomeModal = closeIncomeModal;
 window.closeTxModal = closeTxModal;
 window.saveTxForm = saveTxForm;
 window.deleteIncome = deleteIncome;
+window.previewDocument = previewDocument;
+window.closeDocModal = closeDocModal;
+window.deleteDocument = deleteDocument;
+window.switchDocCategory = switchDocCategory;
+window.zoomDocImg = zoomDocImg;
+window.resetDocImgZoom = resetDocImgZoom;
+window.rotateDocImg = rotateDocImg;
+window.printPreviewedDocument = printPreviewedDocument;
+window.openPreviewedDocInNewWindow = openPreviewedDocInNewWindow;
 
 function attachHandlers() {
   const $ = id => document.getElementById(id);
@@ -4586,6 +6390,7 @@ async function enterApp(email, name) {
   authScreen.style.display = "none";
   appShell.style.display = "flex";
   activeView = "Dashboard";
+  applyPageTranslations();
   renderNav();
   renderMain();
 }
@@ -4612,8 +6417,316 @@ function openUserProfileModal() {
   if (editBio) editBio.value = bio;
   if (modalAvatar) modalAvatar.textContent = displayName.split(" ").map(n => n[0]).join("").toUpperCase() || "U";
 
+  const langSelect = document.getElementById("userLanguageSelect");
+  if (langSelect) langSelect.value = currentLanguage || "en";
+  const langLabel = document.getElementById("currentLangLabel");
+  if (langLabel) {
+    const names = {
+      en: "English (Selected)",
+      ta: "தமிழ் (தேர்ந்தெடுக்கப்பட்டது)",
+      hi: "हिन्दी (चयनित)",
+      ml: "മലയാളം (തിരഞ്ഞെടുത്തു)",
+      te: "తెలుగు (ఎంపిక చేయబడింది)",
+      es: "Español (Seleccionado)",
+      fr: "Français (Sélectionné)"
+    };
+    langLabel.textContent = names[currentLanguage] || currentLanguage;
+  }
+
   modal.style.display = "flex";
 }
+
+function goToBalanceSettingsPage() {
+  closeUserProfileModal();
+  activeView = "Balance Settings";
+  renderNav();
+  renderMain();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function getCompletedMonths() {
+  const currentKey = getCurrentFinanceMonthKey();
+  const set = new Set();
+  const startBal = getStartingBalance();
+  if (startBal.month && startBal.month < currentKey) {
+    set.add(startBal.month);
+  }
+  if (state.income) {
+    state.income.forEach(i => {
+      const k = getMonthYearKey(i.date);
+      if (k && k < currentKey) set.add(k);
+    });
+  }
+  if (state.expenses) {
+    state.expenses.forEach(e => {
+      const k = getMonthYearKey(e.date);
+      if (k && k < currentKey) set.add(k);
+    });
+  }
+  if (state.monthlyBalances) {
+    Object.keys(state.monthlyBalances).forEach(k => {
+      if (k && k < currentKey) set.add(k);
+    });
+  }
+  return Array.from(set).sort().reverse();
+}
+
+/* ===== DEDICATED MONTHLY BALANCE HISTORY VIEW ===== */
+function viewBalanceSettings() {
+  if (!currentUser) return '<div class="card"><p>Please log in to view balance settings.</p></div>';
+
+  const currentMonth = getCurrentFinanceMonthKey();
+  const completedMonths = getCompletedMonths();
+
+  const savingsData = getMonthlySavingsData(currentMonth);
+  const currentInc = savingsData.currentInc;
+  const incomeExp = savingsData.incomeFundedExp;
+  const savingsExp = savingsData.savingsFundedExp;
+  const currentExp = savingsData.currentExp;
+  const currentNet = savingsData.currentNet;
+
+  return `
+  <!-- Top Navigation & Header -->
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 14px;">
+    <div>
+      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap;">
+        <button type="button" onclick="activeView='Dashboard';renderNav();renderMain();"
+          style="background: #eef2ff; color: #4f46e5; border: 1px solid #c7d2fe; padding: 6px 14px; border-radius: 8px; font-weight: 700; font-size: 12.5px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
+          ${t('← Back to Dashboard')}
+        </button>
+      </div>
+      <h2 style="font-size: 24px; font-weight: 800; color: #0f172a; margin: 0;">${t('Monthly Balance History')}</h2>
+    </div>
+  </div>
+
+  <!-- 1. Current Month Status Card (Ongoing) -->
+  <div class="card" style="margin-bottom: 24px; border: 1.5px solid #bfdbfe; background: linear-gradient(145deg, #ffffff 0%, #eff6ff 100%);">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <div style="width: 42px; height: 42px; border-radius: 12px; background: linear-gradient(135deg, #3b82f6, #1d4ed8); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; box-shadow: 0 4px 12px rgba(59,130,246,0.3);">
+          ⏳
+        </div>
+        <div>
+          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <h3 style="font-size: 17px; font-weight: 800; color: #1e3a8a; margin: 0;">${getMonthYearLabel(currentMonth)} (${t('Current Active Month')})</h3>
+          </div>
+          <div style="font-size: 12.5px; color: #2563eb; margin-top: 2px;">
+            ${t('Actively tracking daily transactions. Finalizes into balance history after month ends.')}
+          </div>
+        </div>
+      </div>
+      <div style="text-align: right;">
+        <div style="font-size: 11px; font-weight: 700; color: #1e40af; text-transform: uppercase; letter-spacing: 0.5px;">${t('Dashboard Savings')}</div>
+        <div style="font-size: 24px; font-weight: 800; color: #1d4ed8; font-family: 'IBM Plex Mono', monospace;">
+          ${fmt(savingsData.totalSavings)}
+        </div>
+        ${savingsData.allTimeSavingsExp > 0 ? `
+          <div style="font-size: 11px; color: #dc2626; font-weight: 700; margin-top: 2px;">
+            -${fmt(savingsData.allTimeSavingsExp)} spent from savings
+          </div>
+        ` : ''}
+      </div>
+    </div>
+
+    <!-- Live Stat Chips -->
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-top: 14px;">
+      <div style="background: #ffffff; border: 1px solid #dbeafe; border-radius: 10px; padding: 12px 14px;">
+        <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">${t('Carried From Prev Month')}</div>
+        <div style="font-size: 18px; font-weight: 800; color: #059669; font-family: 'IBM Plex Mono', monospace; margin-top: 2px;">+${fmt(savingsData.lastMonthBalance)}</div>
+        <div style="font-size: 11px; color: ${savingsData.allTimeSavingsExp > 0 ? '#4f46e5' : 'var(--text-muted)'}; font-weight: 600; margin-top: 3px;">${savingsData.allTimeSavingsExp > 0 ? `${fmt(savingsData.totalSavings)} savings balance` : 'From previous month'}</div>
+      </div>
+      <div style="background: #ffffff; border: 1px solid #dbeafe; border-radius: 10px; padding: 12px 14px;">
+        <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">${t('Current Logged Income')}</div>
+        <div style="font-size: 18px; font-weight: 800; color: #0f172a; font-family: 'IBM Plex Mono', monospace; margin-top: 2px;">${fmt(currentInc)}</div>
+        <div style="font-size: 11px; color: var(--text-muted); font-weight: 500; margin-top: 3px;">Monthly earnings</div>
+      </div>
+      <div style="background: #ffffff; border: 1px solid #dbeafe; border-radius: 10px; padding: 12px 14px;">
+        <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Current Logged Expenses</div>
+        <div style="font-size: 18px; font-weight: 800; color: #dc2626; font-family: 'IBM Plex Mono', monospace; margin-top: 2px;">${fmt(incomeExp)}</div>
+        <div style="font-size: 11px; color: #dc2626; font-weight: 500; margin-top: 3px;">Deducted from income</div>
+      </div>
+      <div style="background: #ffffff; border: 1px solid ${savingsData.allTimeSavingsExp > 0 ? '#c7d2fe' : '#dbeafe'}; border-radius: 10px; padding: 12px 14px;">
+        <div style="font-size: 11px; font-weight: 700; color: ${savingsData.allTimeSavingsExp > 0 ? '#4338ca' : 'var(--text-muted)'}; text-transform: uppercase;">Spent From Savings</div>
+        <div style="font-size: 18px; font-weight: 800; color: ${savingsData.allTimeSavingsExp > 0 ? '#4f46e5' : '#64748b'}; font-family: 'IBM Plex Mono', monospace; margin-top: 2px;">${fmt(savingsData.allTimeSavingsExp)}</div>
+        <div style="font-size: 11px; color: ${savingsData.allTimeSavingsExp > 0 ? '#6366f1' : 'var(--text-muted)'}; font-weight: 500; margin-top: 3px;">${fmt(savingsData.totalSavings)} balance remaining</div>
+      </div>
+      <div style="background: #ffffff; border: 1px solid #dbeafe; border-radius: 10px; padding: 12px 14px;">
+        <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">${t('Current Month Net Flow')}</div>
+        <div style="font-size: 18px; font-weight: 800; color: ${currentNet >= 0 ? '#059669' : '#dc2626'}; font-family: 'IBM Plex Mono', monospace; margin-top: 2px;">${currentNet >= 0 ? '+' : ''}${fmt(currentNet)}</div>
+        <div style="font-size: 11px; color: var(--text-muted); font-weight: 500; margin-top: 3px;">Income - Income Expenses</div>
+      </div>
+    </div>
+
+    ${savingsData.allTimeSavingsExp > 0 ? `
+    <!-- Informative Savings Breakdown Banner -->
+    <div style="margin-top: 14px; background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 10px; padding: 10px 14px; font-size: 12.5px; color: #3730a3; display: flex; align-items: center; gap: 8px;">
+      <span style="font-size: 16px;">🏦</span>
+      <span><strong>Savings Protection Active:</strong> <strong>${fmt(savingsData.allTimeSavingsExp)}</strong> was paid directly from your Carried Savings (${savingsData.prevMonthLabel}: ${fmt(savingsData.lastMonthBalance)} → <strong>${fmt(savingsData.totalSavings)}</strong> remaining). As requested, this does <strong>not</strong> reduce your Current Month Net Flow (${fmt(currentNet)}).</span>
+    </div>` : ''}
+
+    <!-- Informational Note -->
+    <div style="margin-top: 14px; background: rgba(255,255,255,0.7); border: 1px solid #bfdbfe; border-radius: 10px; padding: 10px 14px; font-size: 12px; color: #1e40af; display: flex; align-items: center; gap: 8px;">
+      <span>ℹ️</span>
+      <span><strong>Month-End Finalization:</strong> Once ${getMonthYearLabel(currentMonth)} concludes, its closing net balance automatically locks into your ${t("Completed Months' Balance History")} below and transfers into next month's savings.</span>
+    </div>
+  </div>
+
+  <!-- 3. Completed Months' Balance History (Finalized After Month End) -->
+  <div class="card" style="margin-bottom: 24px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; flex-wrap: wrap; gap: 10px;">
+      <div>
+        <h3 style="font-size: 17px; font-weight: 800; color: #0f172a; margin: 0; display: flex; align-items: center; gap: 8px;">
+          <span>Completed Months' Balance History</span>
+        </h3>
+      </div>
+      <button type="button" onclick="toggleAddCustomMonthHistoryBox()"
+        style="background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; font-size: 12px; font-weight: 700; padding: 6px 14px; border-radius: 8px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
+        ${t('+ Record Older Month Balance')}
+      </button>
+    </div>
+
+    <!-- Add Past Month Balance Collapsible Form -->
+    <div id="addPastMonthBox" style="display: none; background: #f8fafc; border: 1.5px dashed #cbd5e1; border-radius: 12px; padding: 14px; margin-bottom: 16px;">
+      <div style="font-size: 13px; font-weight: 700; color: #1e293b; margin-bottom: 8px;">${t('Record Balance for an Earlier Month')}</div>
+      <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+        <input type="month" id="newPastMonthInput" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px; background: #fff;">
+        <input type="number" id="newPastAmountInput" placeholder="Closing balance (e.g. 2500)" step="any" style="flex: 1; min-width: 140px; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px; background: #fff;">
+        <button type="button" onclick="submitCustomMonthHistory()" style="background: #10b981; color: #fff; border: none; padding: 8px 16px; border-radius: 8px; font-size: 12.5px; font-weight: 700; cursor: pointer;">${t('Save Record')}</button>
+        <button type="button" onclick="toggleAddCustomMonthHistoryBox()" style="background: #f1f5f9; color: #64748b; border: 1px solid #cbd5e1; padding: 8px 12px; border-radius: 8px; font-size: 12.5px; font-weight: 600; cursor: pointer;">Cancel</button>
+      </div>
+    </div>
+
+    <!-- Completed Months List -->
+    <div style="display: flex; flex-direction: column; gap: 10px;">
+      ${completedMonths.length === 0 ? `
+        <div style="padding: 28px; text-align: center; color: var(--text-muted); font-size: 13px; background: #f8fafc; border-radius: 12px; border: 1px dashed var(--border-color);">
+          ${t('No completed historical months recorded yet. As months conclude, their closing balances appear here automatically.')}
+        </div>
+      ` : completedMonths.map(m => {
+        const isCustom = state.monthlyBalances && state.monthlyBalances[m] !== undefined && state.monthlyBalances[m] !== null;
+        const currentBal = getMonthlyBalance(m);
+
+        return `
+          <div class="completed-month-card" id="historyRow_${m}" style="display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; background: #ffffff; border: 1px solid var(--border-color); border-radius: 12px; gap: 14px; flex-wrap: wrap; box-shadow: 0 1px 4px rgba(0,0,0,0.02);">
+            <div>
+              <span style="font-weight: 800; font-size: 15px; color: #0f172a;">${getMonthYearLabel(m)}</span>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 12px;" id="historyActions_${m}">
+              <div style="text-align: right;">
+                <div style="font-size: 10.5px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">${t('Closing Balance')}</div>
+                <div style="font-weight: 800; font-size: 18px; color: ${currentBal >= 0 ? '#059669' : '#dc2626'}; font-family: 'IBM Plex Mono', monospace;">
+                  ${fmt(currentBal)}
+                </div>
+              </div>
+              <button type="button" onclick="startEditCompletedBalance('${m}')"
+                style="background: #f8fafc; border: 1px solid #cbd5e1; color: #334155; font-size: 12px; font-weight: 700; padding: 6px 14px; border-radius: 8px; cursor: pointer; transition: background 0.15s ease;">
+                ${t('Edit Balance')}
+              </button>
+              ${isCustom ? `
+              <button type="button" onclick="resetCompletedBalance('${m}')" title="Reset to auto-calculated income minus expenses"
+                style="background: #fff1f2; border: 1px solid #fecaca; color: #e11d48; font-size: 12px; font-weight: 700; padding: 6px 10px; border-radius: 8px; cursor: pointer;">
+                Reset
+              </button>` : ''}
+            </div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  </div>
+  `;
+}
+
+function startEditCompletedBalance(monthKey) {
+  const actionsDiv = document.getElementById("historyActions_" + monthKey);
+  if (!actionsDiv) return;
+  const currentBal = getMonthlyBalance(monthKey);
+  actionsDiv.innerHTML = `
+    <div style="display: flex; align-items: center; gap: 6px;">
+      <span style="font-size: 14px; font-weight: 700; color: #475569;">₹</span>
+      <input type="number" id="inputHist_${monthKey}" value="${currentBal}" step="any"
+        style="width: 110px; padding: 6px 10px; border-radius: 8px; border: 1.5px solid #6366f1; font-weight: 700; font-size: 13px; font-family: 'IBM Plex Mono', monospace; outline: none; background: #fff;">
+      <button type="button" onclick="submitEditCompletedBalance('${monthKey}')"
+        style="background: #10b981; color: #ffffff; border: none; padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer;">
+        Save
+      </button>
+      <button type="button" onclick="renderMain()"
+        style="background: #f1f5f9; color: #64748b; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer;">
+        Cancel
+      </button>
+    </div>
+  `;
+  const inp = document.getElementById("inputHist_" + monthKey);
+  if (inp) {
+    inp.focus();
+    inp.select();
+    inp.onkeydown = (e) => {
+      if (e.key === "Enter") { e.preventDefault(); submitEditCompletedBalance(monthKey); }
+      else if (e.key === "Escape") { e.preventDefault(); renderMain(); }
+    };
+  }
+}
+
+function submitEditCompletedBalance(monthKey) {
+  const inp = document.getElementById("inputHist_" + monthKey);
+  if (!inp) return;
+  const val = parseFloat(inp.value);
+  if (isNaN(val)) {
+    showToast("Please enter a valid balance amount.");
+    return;
+  }
+  if (!state.monthlyBalances) state.monthlyBalances = {};
+  state.monthlyBalances[monthKey] = val;
+  saveSessionData();
+  renderMain();
+  showToast(`Updated ${getMonthYearLabel(monthKey)} balance to ${fmt(val)}!`);
+}
+
+function resetCompletedBalance(monthKey) {
+  if (state.monthlyBalances && state.monthlyBalances[monthKey] !== undefined) {
+    delete state.monthlyBalances[monthKey];
+    saveSessionData();
+    renderMain();
+    showToast(`Reset ${getMonthYearLabel(monthKey)} balance to automatic calculation.`);
+  }
+}
+
+function toggleAddCustomMonthHistoryBox() {
+  const box = document.getElementById("addPastMonthBox");
+  if (!box) return;
+  box.style.display = (box.style.display === "none" || !box.style.display) ? "block" : "none";
+}
+
+function submitCustomMonthHistory() {
+  const mInput = document.getElementById("newPastMonthInput");
+  const aInput = document.getElementById("newPastAmountInput");
+  if (!mInput || !aInput) return;
+  const monthKey = mInput.value;
+  const val = parseFloat(aInput.value);
+  if (!monthKey) {
+    showToast("Please select a month.");
+    return;
+  }
+  if (isNaN(val)) {
+    showToast("Please enter a valid balance amount.");
+    return;
+  }
+  if (!state.monthlyBalances) state.monthlyBalances = {};
+  state.monthlyBalances[monthKey] = val;
+  saveSessionData();
+  mInput.value = "";
+  aInput.value = "";
+  toggleAddCustomMonthHistoryBox();
+  renderMain();
+  showToast(`Recorded ${getMonthYearLabel(monthKey)} balance as ${fmt(val)}!`);
+}
+
+window.goToBalanceSettingsPage = goToBalanceSettingsPage;
+window.startEditCompletedBalance = startEditCompletedBalance;
+window.submitEditCompletedBalance = submitEditCompletedBalance;
+window.resetCompletedBalance = resetCompletedBalance;
+window.toggleAddCustomMonthHistoryBox = toggleAddCustomMonthHistoryBox;
+window.submitCustomMonthHistory = submitCustomMonthHistory;
 
 function closeUserProfileModal() {
   const modal = document.getElementById("userProfileModal");
@@ -4747,9 +6860,9 @@ signupForm.addEventListener("submit", async e => {
       enterApp(email, name);
     }
   } catch (err) {
-    console.error("Signup handler exception:", err);
+    console.warn("Signup notice:", err.message || err);
     if (signupError) {
-      signupError.textContent = "An error occurred during account creation: " + (err.message || err);
+      signupError.textContent = "Account creation notice: " + (err.message || err);
       signupError.classList.add("show");
     }
   } finally {
@@ -4769,9 +6882,30 @@ loginForm.addEventListener("submit", async e => {
   const email = emailInput ? emailInput.value.trim().toLowerCase() : "";
   const pass = passInput ? passInput.value : "";
 
-  if (!email || !pass) {
+  if (!email && !pass) {
     if (loginError) {
-      loginError.textContent = "Please enter both your email address and password.";
+      loginError.innerHTML = `<span style="color: #dc2626; font-size: 13px; font-weight: 700;">Please enter your email and password.</span>`;
+      loginError.classList.add("show");
+    }
+    return;
+  }
+  if (!email) {
+    if (loginError) {
+      loginError.innerHTML = `<span style="color: #dc2626; font-size: 13px; font-weight: 700;">Wrong email. Please enter your email address.</span>`;
+      loginError.classList.add("show");
+    }
+    return;
+  }
+  if (!pass) {
+    if (loginError) {
+      loginError.innerHTML = `<span style="color: #dc2626; font-size: 13px; font-weight: 700;">Please enter your password.</span>`;
+      loginError.classList.add("show");
+    }
+    return;
+  }
+  if (!email.includes("@") || !email.includes(".")) {
+    if (loginError) {
+      loginError.innerHTML = `<span style="color: #dc2626; font-size: 13px; font-weight: 700;">Wrong email address. Please enter a valid email.</span>`;
       loginError.classList.add("show");
     }
     return;
@@ -4839,12 +6973,46 @@ loginForm.addEventListener("submit", async e => {
             }, 100);
           }
         } else {
-          let msg = res.message || "Invalid email address or password.";
-          if (res.code === "auth/invalid-credential" || res.code === "auth/user-not-found" || res.code === "auth/wrong-password") {
-            msg = "Account not found or password incorrect. If you haven't created an account yet, click 'Sign up' above!";
-          }
-          if (loginError) {
-            loginError.textContent = msg;
+          if (res.errorType === "not_signed_up" || res.code === "auth/user-not-found") {
+            loginError.innerHTML = `
+              <div style="color: #dc2626; font-size: 13px; font-weight: 700; margin-top: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
+                <span>No account found. Please create an account.</span>
+                <button type="button" onclick="switchToSignup('${escapeHtml(email)}')"
+                  style="background: #dc2626; color: #ffffff; border: none; padding: 4px 10px; border-radius: 6px; font-size: 11.5px; font-weight: 700; cursor: pointer; white-space: nowrap;">
+                  Create account →
+                </button>
+              </div>
+            `;
+            loginError.classList.add("show");
+          } else if (res.errorType === "wrong_password" || res.code === "auth/wrong-password") {
+            loginError.innerHTML = `<div style="color: #dc2626; font-size: 13px; font-weight: 700; margin-top: 6px;">Wrong Password</div>`;
+            loginError.classList.add("show");
+          } else if (res.errorType === "wrong_email" || res.code === "auth/invalid-email") {
+            loginError.innerHTML = `
+              <div style="color: #dc2626; font-size: 13px; font-weight: 700; margin-top: 6px;">
+                Wrong email address. Please enter a valid email.
+              </div>
+            `;
+            loginError.classList.add("show");
+          } else if (res.errorType === "network_error" || res.code === "auth/network-request-failed" || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+            if (usersDB[email]) {
+              const displayName = usersDB[email].name || (usersDB[email].data && usersDB[email].data.profile && usersDB[email].data.profile.name) || email.split("@")[0];
+              enterApp(email, displayName);
+              showToast(`Offline mode active. Welcome back, ${displayName}!`);
+              return;
+            }
+            loginError.innerHTML = `
+              <div style="color: #dc2626; font-size: 13px; font-weight: 700; margin-top: 6px;">
+                Network connection offline or unreachable. Please check your internet connection.
+              </div>
+            `;
+            loginError.classList.add("show");
+          } else {
+            loginError.innerHTML = `
+              <div style="color: #dc2626; font-size: 13px; font-weight: 700; margin-top: 6px;">
+                ${escapeHtml(res.message || "Invalid credentials. Please try again.")}
+              </div>
+            `;
             loginError.classList.add("show");
           }
         }
@@ -4855,20 +7023,26 @@ loginForm.addEventListener("submit", async e => {
         if (usersDB[email].password === pass) {
           enterApp(email, usersDB[email].name);
         } else {
-          if (loginError) {
-            loginError.textContent = "Incorrect password. If you forgot your password, please click 'Forgot password?' above.";
-            loginError.classList.add("show");
-          }
+          loginError.innerHTML = `<div style="color: #dc2626; font-size: 13px; font-weight: 700; margin-top: 6px;">Wrong Password</div>`;
+          loginError.classList.add("show");
         }
       } else {
-        usersDB[email] = { name: email.split("@")[0], password: pass, data: blankState() };
-        enterApp(email, usersDB[email].name);
+        loginError.innerHTML = `
+          <div style="color: #dc2626; font-size: 13px; font-weight: 700; margin-top: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
+            <span>No account found. Please create an account.</span>
+            <button type="button" onclick="switchToSignup('${escapeHtml(email)}')"
+              style="background: #dc2626; color: #ffffff; border: none; padding: 4px 10px; border-radius: 6px; font-size: 11.5px; font-weight: 700; cursor: pointer; white-space: nowrap;">
+              Create account →
+            </button>
+          </div>
+        `;
+        loginError.classList.add("show");
       }
     }
   } catch (err) {
-    console.error("Login handler exception:", err);
+    console.warn("Login notice:", err.message || err);
     if (loginError) {
-      loginError.textContent = "An error occurred during sign in: " + (err.message || err);
+      loginError.innerHTML = `<span style="color: #dc2626; font-size: 13px; font-weight: 700;">Sign in notice: ${escapeHtml(err.message || String(err))}</span>`;
       loginError.classList.add("show");
     }
   } finally {
@@ -4931,7 +7105,7 @@ if (forgotPassForm) {
       showToast("Password reset link sent! Check your inbox or spam folder.");
       if (emailInput) emailInput.value = "";
     } catch (err) {
-      console.error("Forgot password exception:", err);
+      console.warn("Forgot password notice:", err.message || err);
       if (forgotError) {
         forgotError.textContent = err.message || "Failed to send password reset link. Please verify your email.";
         forgotError.classList.add("show");
@@ -5036,9 +7210,9 @@ if (resetPassForm) {
       }
       showToast("Password updated successfully! Please log in.");
     } catch (err) {
-      console.error("Reset password exception:", err);
+      console.warn("Reset password notice:", err.message || err);
       if (resetError) {
-        resetError.textContent = "Error updating password: " + (err.message || err);
+        resetError.textContent = "Notice updating password: " + (err.message || err);
         resetError.classList.add("show");
       }
     } finally {
@@ -5049,6 +7223,24 @@ if (resetPassForm) {
     }
   });
 }
+
+function switchToSignup(prefillEmail) {
+  showAuthTab('signup');
+  const sEmail = document.getElementById("signupEmail");
+  if (sEmail && prefillEmail) sEmail.value = prefillEmail;
+  const sName = document.getElementById("signupName");
+  if (sName) sName.focus();
+}
+
+function switchToForgot(prefillEmail) {
+  const forgotBtn = document.getElementById("forgotPassBtn");
+  if (forgotBtn) forgotBtn.click();
+  const fEmail = document.getElementById("forgotEmail");
+  if (fEmail && prefillEmail) fEmail.value = prefillEmail;
+}
+
+window.switchToSignup = switchToSignup;
+window.switchToForgot = switchToForgot;
 
 function checkResetPasswordUrl() {
   try {
@@ -5217,7 +7409,7 @@ function viewHealthAndWellness() {
                   <div class="ur-sub">${escapeHtml(r.type)} • ${escapeHtml(r.date)}</div>
                 </div>
               </div>
-              ${r.fileData ? `<button class="action-btn" onclick="openDocModalFromHealth('${escapeHtml(r.title)}', '${r.fileData}')">👁 View File</button>` : ''}
+              ${r.fileData ? `<button class="action-btn" onclick="openDocModalFromHealth('${escapeHtml(r.title)}', '${r.fileData}')">View File</button>` : ''}
             </div>
           `).join("")}
           ${(state.healthRecords || []).length === 0 ? `<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 13px;">No health records added yet.</div>` : ''}
@@ -5264,8 +7456,8 @@ function renderHealthRecordsSection() {
             </div>
           </div>
           <div style="display: flex; gap: 8px; align-items: center;">
-            ${r.fileData ? `<button class="action-btn" onclick="openDocModalFromHealth('${escapeHtml(r.title)}', '${r.fileData}')">👁 View Attachment</button>` : ''}
-            <button class="action-btn danger-btn" onclick="deleteHealthRecord(${r.id})">🗑 Delete</button>
+            ${r.fileData ? `<button class="action-btn" onclick="openDocModalFromHealth('${escapeHtml(r.title)}', '${r.fileData}')">View Attachment</button>` : ''}
+            <button class="action-btn danger-btn" onclick="deleteHealthRecord(${r.id})">Delete</button>
           </div>
         </div>
       `).join("")}
@@ -5467,7 +7659,7 @@ function renderFitnessAndHabitsSection() {
               <div class="ur-sub">${w.date} ${w.calories ? '• ' + w.calories + ' kcal' : ''}</div>
             </div>
           </div>
-          <button class="action-btn danger-btn" onclick="deleteWorkout(${w.id})">🗑</button>
+          <button class="action-btn danger-btn" onclick="deleteWorkout(${w.id})">Delete</button>
         </div>
       `).join("")}
       ${(state.workouts || []).length === 0 ? `<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 13px;">No workouts logged yet. Select a workout type above!</div>` : ''}
@@ -5634,7 +7826,7 @@ function renderMedicationsSection() {
           </div>
           <div style="display: flex; gap: 8px; align-items: center;">
             <span class="pill-tag ${m.active ? 'warning' : 'info'}">${m.active ? 'Active' : 'Inactive'}</span>
-            <button class="action-btn danger-btn" onclick="deleteMedication(${m.id})">🗑 Delete</button>
+            <button class="action-btn danger-btn" onclick="deleteMedication(${m.id})">Delete</button>
           </div>
         </div>
       `).join("")}
@@ -5705,7 +7897,7 @@ function renderDoctorVisitsSection() {
               </div>
             </div>
           </div>
-          <button class="action-btn danger-btn" onclick="deleteAppointment(${v.id})">🗑 Delete</button>
+          <button class="action-btn danger-btn" onclick="deleteAppointment(${v.id})">Delete</button>
         </div>
       `).join("")}
       ${visits.length === 0 ? `<div style="padding: 24px; text-align: center; color: var(--text-muted); font-size: 13px;">No doctor visits scheduled yet.</div>` : ''}
@@ -5759,7 +7951,7 @@ function viewNotesAndJournal() {
             <span>📅 ${escapeHtml(n.date)}</span>
             <div style="display: flex; gap: 6px;">
               <button class="action-btn" onclick="togglePinNote(${n.id})">${n.isPinned ? '📌 Unpin' : '📌 Pin'}</button>
-              <button class="action-btn danger-btn" onclick="deleteNote(${n.id})">🗑</button>
+              <button class="action-btn danger-btn" onclick="deleteNote(${n.id})">Delete</button>
             </div>
           </div>
         </div>
@@ -5931,7 +8123,7 @@ function viewContacts() {
           <div style="font-size: 12.5px; color: #475569; margin-bottom: 4px;">✉️ ${escapeHtml(c.email || 'N/A')}</div>
           ${c.birthday ? `<div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">🎂 Birthday: ${escapeHtml(c.birthday)}</div>` : ''}
           <div style="display: flex; justify-content: flex-end; margin-top: 10px;">
-            <button class="action-btn danger-btn" onclick="deleteContact(${c.id})">🗑 Delete</button>
+            <button class="action-btn danger-btn" onclick="deleteContact(${c.id})">Delete</button>
           </div>
         </div>
       `).join("")}
@@ -6057,7 +8249,7 @@ function renderVehiclesSection() {
             </div>
 
             <div style="display: flex; justify-content: flex-end;">
-              <button class="action-btn danger-btn" onclick="deleteVehicle(${v.id})">🗑 Delete</button>
+              <button class="action-btn danger-btn" onclick="deleteVehicle(${v.id})">Delete</button>
             </div>
           </div>
         `;
@@ -6161,7 +8353,7 @@ function renderWarrantiesSection() {
             </div>
 
             <div style="display: flex; justify-content: flex-end; margin-top: 12px;">
-              <button class="action-btn danger-btn" onclick="deleteWarranty(${w.id})">🗑 Delete</button>
+              <button class="action-btn danger-btn" onclick="deleteWarranty(${w.id})">Delete</button>
             </div>
           </div>
         `;
@@ -6322,14 +8514,14 @@ function renderImportantIdsSection() {
               <div style="display: flex; gap: 6px; flex-wrap: wrap;">
                 ${(idItem.documentFile || idItem.fileData) ? `
                   <button type="button" onclick="viewVehiclePdf(${idItem.id})" style="background: #eef2ff; color: #4f46e5; border: 1px solid #c7d2fe; padding: 5px 10px; font-weight: 700; font-size: 11.5px; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;">
-                    👁 View
+                    View
                   </button>
                   <a href="${idItem.documentFile || idItem.fileData}" download="${escapeHtml(idItem.fileName || docType + '.pdf')}" style="background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; text-decoration: none; padding: 5px 10px; font-weight: 700; font-size: 11.5px; border-radius: 6px; display: inline-flex; align-items: center; gap: 4px;">
-                    ⬇ Download
+                    Download
                   </a>
                 ` : ''}
               </div>
-              <button class="action-btn danger-btn" onclick="deleteImportantId(${idItem.id})" style="font-size: 11px; padding: 5px 10px;">🗑 Delete</button>
+              <button class="action-btn danger-btn" onclick="deleteImportantId(${idItem.id})" style="font-size: 11px; padding: 5px 10px;">Delete</button>
             </div>
           </div>
         `;
@@ -6704,6 +8896,9 @@ function attachGlobalHeaderEvents() {
     }
   }
   attachGlobalHeaderEvents();
+  if (typeof applyPageTranslations === "function") {
+    applyPageTranslations();
+  }
   setInterval(updateLiveDate, 1000);
   updateLiveDate();
 })();

@@ -2984,8 +2984,7 @@ footer {
     flex: 1 !important;
     min-width: 0 !important;
   }
-  .month-select-wrap select,
-  #billMonthSelect {
+  .month-select-wrap select {
     width: 100% !important;
     min-width: 0 !important;
     font-size: 13px !important;
@@ -3277,6 +3276,92 @@ input:focus, select:focus, textarea:focus {
   background: #e2e8f0;
   color: #0f172a;
   transform: scale(1.1);
+}
+
+/* ==========================================================================
+   DOCUMENT VAULT PREVIEW (Crystal Clear View & Toolbar)
+   ========================================================================== */
+
+#docPreviewModal .doc-modal-container {
+  max-width: 1080px !important;
+  width: 95vw !important;
+  max-height: 94vh !important;
+  border-radius: 20px !important;
+  box-shadow: 0 25px 60px -15px rgba(15, 23, 42, 0.45), 0 0 0 1px rgba(226, 232, 240, 0.8) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+  padding: 0 !important;
+  background: #ffffff !important;
+}
+
+#docPreviewModal .doc-modal-header {
+  padding: 16px 24px !important;
+  background: #ffffff !important;
+  border-bottom: 1px solid var(--border-color) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  margin-bottom: 0 !important;
+}
+
+#docPreviewModal .doc-modal-body {
+  padding: 18px !important;
+  background: #0f172a !important;
+  min-height: 520px !important;
+  max-height: 75vh !important;
+  overflow: auto !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex: 1 !important;
+}
+
+#docPreviewModal .doc-modal-footer {
+  padding: 14px 24px !important;
+  background: #ffffff !important;
+  border-top: 1px solid var(--border-color) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  flex-wrap: wrap !important;
+  gap: 12px !important;
+}
+
+.doc-text-paper {
+  background: #ffffff;
+  color: #0f172a;
+  border-radius: 12px;
+  padding: 40px 48px;
+  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.35);
+  max-width: 860px;
+  width: 100%;
+  margin: 0 auto;
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  line-height: 1.8;
+  font-size: 15px;
+  box-sizing: border-box;
+}
+
+.doc-zoom-btn {
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  color: #334155;
+  font-weight: 700;
+  font-size: 12.5px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.doc-zoom-btn:hover {
+  background: #e2e8f0;
+  color: #0f172a;
 }
 
 /* Smooth Table Row Hovers & Cards */
