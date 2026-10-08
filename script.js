@@ -3,19 +3,30 @@
    User Authentication & Blank State Life Analytics Engine
    ========================================================================== */
 
-// Clean blank state for every new user/session — no pre-filled data!
+function getDefaultTimetablePeriods() {
+  return [
+    { id: "period_1", name: "Period 1: Morning Focus", startTime: "08:30", endTime: "10:00", color: "#4f46e5" },
+    { id: "period_2", name: "Period 2: Core Work & Study", startTime: "10:15", endTime: "11:45", color: "#059669" },
+    { id: "period_3", name: "Period 3: Projects & Practice", startTime: "12:00", endTime: "13:30", color: "#0284c7" },
+    { id: "period_4", name: "Period 4: Afternoon Tasks", startTime: "14:30", endTime: "16:00", color: "#d97706" },
+    { id: "period_5", name: "Period 5: Review & Assignments", startTime: "16:15", endTime: "17:45", color: "#7c3aed" },
+    { id: "period_6", name: "Period 6: Evening Wrap-up & Planning", startTime: "18:30", endTime: "20:00", color: "#e11d48" }
+  ];
+}
+
 // Clean blank state for user session — no pre-filled sample data!
 function blankState() {
+  const now = new Date();
+  const currentKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   return {
     profile: {
       name: "",
       phone: "",
-      bio: ""
+      bio: "",
+      createdAt: now.toISOString()
     },
-    startingBalance: {
-      month: "2026-09",
-      amount: 2700
-    },
+    startMonth: currentKey,
+    startingBalance: null,
     monthlyBalances: {},
     income: [],
     expenses: [],
@@ -31,6 +42,8 @@ function blankState() {
       "Other": 3000
     },
     tasks: [],
+    timetablePeriods: getDefaultTimetablePeriods(),
+    timetableTasks: [],
     bills: [],
     subscriptions: [],
     documents: [],
@@ -55,10 +68,54 @@ function blankState() {
   };
 }
 
+function sanitizeUserState(targetState, userEmail) {
+  if (!targetState || typeof targetState !== 'object') return targetState;
+
+  // 1. Wipe mock startingBalance
+  if (targetState.startingBalance !== null && targetState.startingBalance !== undefined) {
+    targetState.startingBalance = null;
+  }
+
+  // 2. Wipe any mock monthlyBalances from 2026-09 with 2700
+  if (targetState.monthlyBalances && typeof targetState.monthlyBalances === 'object') {
+    if (targetState.monthlyBalances["2026-09"] !== undefined) {
+      const val = Number(targetState.monthlyBalances["2026-09"]);
+      if (val === 2700 || isNaN(val)) {
+        delete targetState.monthlyBalances["2026-09"];
+      }
+    }
+  }
+
+  // 3. For users with no transactions prior to the current active month, ensure startMonth is current active month
+  const actualCurrent = (typeof getActualCurrentMonthKey === 'function') ? getActualCurrentMonthKey() : `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+  const hasPastActivity = (
+    (Array.isArray(targetState.income) && targetState.income.some(i => { const k = typeof getMonthYearKey === 'function' ? getMonthYearKey(i.date) : ""; return k && k < actualCurrent; })) ||
+    (Array.isArray(targetState.expenses) && targetState.expenses.some(e => { const k = typeof getMonthYearKey === 'function' ? getMonthYearKey(e.date) : ""; return k && k < actualCurrent; })) ||
+    (Array.isArray(targetState.bills) && targetState.bills.some(b => { const k = typeof getMonthYearKey === 'function' ? getMonthYearKey(b.due || b.dueDate) : ""; return k && k < actualCurrent; })) ||
+    (targetState.monthlyBalances && typeof targetState.monthlyBalances === 'object' && Object.keys(targetState.monthlyBalances).some(k => k && k < actualCurrent && targetState.monthlyBalances[k] !== undefined && targetState.monthlyBalances[k] !== null))
+  );
+
+  if (!hasPastActivity) {
+    if (!targetState.startMonth || targetState.startMonth < actualCurrent) {
+      targetState.startMonth = actualCurrent;
+    }
+  }
+
+  // 4. Ensure Timetable Periods and Tasks structure
+  if (!targetState.timetablePeriods || !Array.isArray(targetState.timetablePeriods) || targetState.timetablePeriods.length === 0) {
+    targetState.timetablePeriods = getDefaultTimetablePeriods();
+  }
+  if (!targetState.timetableTasks || !Array.isArray(targetState.timetableTasks)) {
+    targetState.timetableTasks = [];
+  }
+
+  return targetState;
+}
+
 // In-memory database of registered user accounts for browser tab session.
 let usersDB = {};
 let currentUser = null;
-let state = blankState();
+let state = sanitizeUserState(blankState());
 let activeGoalTab = "today"; // Sub-tab inside Goals
 let activeDocCategory = "Yours Document"; // Sub-tab inside Documents
 let activeApptCategory = "Personal"; // Sub-tab inside Appointments
@@ -531,20 +588,24 @@ function loadSessionData() {
       if (!usersDB[currentUser]) {
         usersDB[currentUser] = { name: currentUser.split("@")[0], data: blankState() };
       }
-      state = usersDB[currentUser].data || blankState();
+      state = sanitizeUserState(usersDB[currentUser].data || blankState(), currentUser);
+      usersDB[currentUser].data = state;
 
       const applyCloudSync = (cloudData) => {
         if (cloudData && typeof cloudData === 'object' && Object.keys(cloudData).length > 0) {
-          state = { ...blankState(), ...state, ...cloudData };
-          if (state.profile) {
-            if (state.profile.name) usersDB[currentUser].name = state.profile.name;
-            if (state.profile.phone) usersDB[currentUser].phone = state.profile.phone;
-            if (state.profile.bio) usersDB[currentUser].bio = state.profile.bio;
-          }
-          if (usersDB[currentUser]) {
+          state = sanitizeUserState({ ...blankState(), ...state, ...cloudData }, currentUser);
+          if (currentUser) {
+            if (!usersDB[currentUser]) {
+              usersDB[currentUser] = { name: (state.profile && state.profile.name) || currentUser.split("@")[0], data: state };
+            }
+            if (state.profile) {
+              if (state.profile.name) usersDB[currentUser].name = state.profile.name;
+              if (state.profile.phone) usersDB[currentUser].phone = state.profile.phone;
+              if (state.profile.bio) usersDB[currentUser].bio = state.profile.bio;
+            }
             usersDB[currentUser].data = state;
           }
-          const displayName = (usersDB[currentUser] && usersDB[currentUser].name) || (state.profile && state.profile.name) || currentUser.split("@")[0];
+          const displayName = (currentUser && usersDB[currentUser] && usersDB[currentUser].name) || (state.profile && state.profile.name) || (currentUser ? currentUser.split("@")[0] : "User");
           if (document.getElementById("profileName")) document.getElementById("profileName").textContent = displayName;
           if (document.getElementById("profileAvatar")) document.getElementById("profileAvatar").textContent = displayName.split(" ").map(n => n[0]).join("").toUpperCase() || "U";
           
@@ -696,36 +757,86 @@ function totalSavingsExpenseForMonth(monthKey) {
     .reduce((s, e) => s + (e.amount || 0), 0);
 }
 
-function hasPreviousMonthSavings(targetMonthKey) {
-  const currentKey = targetMonthKey || getCurrentFinanceMonthKey();
-  const completed = typeof getCompletedMonths === "function" ? getCompletedMonths() : [];
-  const savingsData = getMonthlySavingsData(currentKey);
-  return completed.length > 0 || savingsData.lastMonthBalance > 0;
+function getActualCurrentMonthKey() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function getUserStartMonth() {
+  if (state.startMonth) return state.startMonth;
+  if (state.profile && state.profile.createdAt) {
+    const k = getMonthYearKey(state.profile.createdAt);
+    if (k) return k;
+  }
+  const allMonths = [];
+  if (state.income) state.income.forEach(i => { const k = getMonthYearKey(i.date); if (k) allMonths.push(k); });
+  if (state.expenses) state.expenses.forEach(e => { const k = getMonthYearKey(e.date); if (k) allMonths.push(k); });
+  if (state.bills) state.bills.forEach(b => { const k = getMonthYearKey(b.due || b.dueDate); if (k) allMonths.push(k); });
+  if (state.monthlyBalances) Object.keys(state.monthlyBalances).forEach(k => { if (k) allMonths.push(k); });
+  if (allMonths.length > 0) {
+    allMonths.sort();
+    return allMonths[0];
+  }
+  return getActualCurrentMonthKey();
+}
+
+function getNextMonthKey(monthKey) {
+  if (!monthKey || !monthKey.includes("-")) {
+    const d = new Date();
+    d.setMonth(d.getMonth() + 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  }
+  const [yyyy, mm] = monthKey.split("-").map(n => parseInt(n, 10));
+  const d = new Date(yyyy, mm, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function getCompletedMonths() {
+  const currentKey = getActualCurrentMonthKey();
+  const set = new Set();
+
+  if (Array.isArray(state.income)) {
+    state.income.forEach(i => {
+      const k = getMonthYearKey(i.date);
+      if (k && k < currentKey) set.add(k);
+    });
+  }
+  if (Array.isArray(state.expenses)) {
+    state.expenses.forEach(e => {
+      const k = getMonthYearKey(e.date);
+      if (k && k < currentKey) set.add(k);
+    });
+  }
+  if (Array.isArray(state.bills)) {
+    state.bills.forEach(b => {
+      const k = getMonthYearKey(b.due || b.dueDate);
+      if (k && k < currentKey) set.add(k);
+    });
+  }
+  if (state.monthlyBalances && typeof state.monthlyBalances === 'object') {
+    Object.keys(state.monthlyBalances).forEach(k => {
+      if (k === "2026-09" && Number(state.monthlyBalances[k]) === 2700) {
+        delete state.monthlyBalances[k];
+        return;
+      }
+      if (k && k < currentKey && state.monthlyBalances[k] !== undefined && state.monthlyBalances[k] !== null) {
+        set.add(k);
+      }
+    });
+  }
+  return Array.from(set).sort().reverse();
+}
+
+function isUserFirstMonth() {
+  const completed = getCompletedMonths();
+  return completed.length === 0;
 }
 
 function getStartingBalance() {
-  if (!state.startingBalance || typeof state.startingBalance !== 'object') {
-    state.startingBalance = { month: "2026-09", amount: 2700 };
+  if (state.startingBalance) {
+    state.startingBalance = null;
   }
-  if (!state.startingBalance.month) state.startingBalance.month = "2026-09";
-  if (state.startingBalance.amount === undefined || state.startingBalance.amount === null) state.startingBalance.amount = 2700;
-  return state.startingBalance;
-}
-
-function getMonthlyBalance(monthKey) {
-  if (!state.monthlyBalances) state.monthlyBalances = {};
-  if (state.monthlyBalances[monthKey] !== undefined && state.monthlyBalances[monthKey] !== null) {
-    const val = Number(state.monthlyBalances[monthKey]);
-    if (!isNaN(val)) return val;
-  }
-  const inc = totalIncomeForMonth(monthKey);
-  const exp = totalIncomeExpenseForMonth(monthKey);
-  const net = inc - exp;
-  const startBal = getStartingBalance();
-  if (startBal && startBal.month === monthKey && inc === 0 && exp === 0) {
-    return Number(startBal.amount) || 0;
-  }
-  return net;
+  return null;
 }
 
 function getPreviousMonthKey(monthKey) {
@@ -739,74 +850,103 @@ function getPreviousMonthKey(monthKey) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
+function hasPreviousMonthSavings(targetMonthKey) {
+  if (isUserFirstMonth()) return false;
+  const currentKey = targetMonthKey || getCurrentFinanceMonthKey();
+  const completed = getCompletedMonths();
+  const savingsData = getMonthlySavingsData(currentKey);
+  return completed.length > 0 && savingsData.lastMonthBalance > 0;
+}
+
+function getChronologicalCompletedBalances() {
+  const completed = getCompletedMonths();
+  if (!completed || completed.length === 0) return {};
+
+  const chronological = completed.slice().sort();
+  const results = {};
+  let previousClosing = 0;
+
+  for (const m of chronological) {
+    if (state.monthlyBalances && state.monthlyBalances[m] !== undefined && state.monthlyBalances[m] !== null) {
+      const customVal = Number(state.monthlyBalances[m]);
+      if (!isNaN(customVal)) {
+        previousClosing = customVal;
+        results[m] = customVal;
+        continue;
+      }
+    }
+
+    const inc = totalIncomeForMonth(m);
+    const incExp = totalIncomeExpenseForMonth(m);
+    const savExp = totalSavingsExpenseForMonth(m);
+    const netFlow = inc - incExp;
+
+    const closing = previousClosing + netFlow - savExp;
+    previousClosing = closing;
+    results[m] = closing;
+  }
+
+  return results;
+}
+
+function getMonthlyBalance(monthKey) {
+  if (!state.monthlyBalances) state.monthlyBalances = {};
+  if (state.monthlyBalances[monthKey] !== undefined && state.monthlyBalances[monthKey] !== null) {
+    const val = Number(state.monthlyBalances[monthKey]);
+    if (!isNaN(val)) return val;
+  }
+
+  const completedMap = getChronologicalCompletedBalances();
+  if (completedMap[monthKey] !== undefined) {
+    return completedMap[monthKey];
+  }
+
+  const inc = totalIncomeForMonth(monthKey);
+  const exp = totalIncomeExpenseForMonth(monthKey);
+  return inc - exp;
+}
+
 function getMonthlySavingsData(targetMonthKey) {
   const monthKey = targetMonthKey || getCurrentFinanceMonthKey();
   const prevKey = getPreviousMonthKey(monthKey);
 
-  // 1. Direct last month's balance (custom edited or computed)
-  const lastMonthNet = getMonthlyBalance(prevKey);
-  const lastMonthBalance = Math.max(0, lastMonthNet);
+  const isFirst = isUserFirstMonth();
 
-  // 2. Cumulative rollover across chronological historical months if user has multi-month history
-  let cumulativeSurplus = 0;
-  if (typeof getAvailableFinanceMonthYears === "function") {
-    const allMonths = getAvailableFinanceMonthYears().filter(m => m < monthKey).sort();
-    for (const m of allMonths) {
-      const mNet = getMonthlyBalance(m);
-      cumulativeSurplus = Math.max(0, cumulativeSurplus + mNet);
+  let lastMonthBalance = 0;
+  if (!isFirst) {
+    const completedMap = getChronologicalCompletedBalances();
+    if (completedMap[prevKey] !== undefined) {
+      lastMonthBalance = Math.max(0, completedMap[prevKey]);
+    } else {
+      const prevNet = getMonthlyBalance(prevKey);
+      lastMonthBalance = Math.max(0, prevNet);
     }
   }
 
-  // Raw rollover pool before past savings deductions
-  const rawRollover = Math.max(lastMonthBalance, cumulativeSurplus);
-
-  // Savings spent in prior months (before monthKey)
-  const pastSavingsExp = (state.expenses || [])
-    .filter(e => {
-      const k = getMonthYearKey(e.date);
-      return k && k < monthKey && e.paidFrom === "savings";
-    })
-    .reduce((s, e) => s + (Number(e.amount) || 0), 0);
-
-  // Net rollover carried into this month after prior savings deductions
-  const rolloverFromLastMonth = Math.max(0, rawRollover - pastSavingsExp);
-
-  // Current month numbers
   const currentInc = totalIncomeForMonth(monthKey);
   const currentExp = totalExpenseForMonth(monthKey);
   const incomeExp = totalIncomeExpenseForMonth(monthKey);
   const savingsExp = totalSavingsExpenseForMonth(monthKey);
-  const currentNet = getMonthlyBalance(monthKey);
+  const currentNet = currentInc - incomeExp;
 
-  // All savings expenses spent across the entire timeline
-  const allTimeSavingsExp = (state.expenses || [])
-    .filter(e => e.paidFrom === "savings")
-    .reduce((s, e) => s + (Number(e.amount) || 0), 0);
-
-  // Remaining rollover after deducting current month's savings expenses
-  const remainingRollover = Math.max(0, rolloverFromLastMonth - savingsExp);
-
-  // Total savings in this month:
-  // Initial pool + current month net income flow - all savings spent
-  const totalSavings = Math.max(0, rawRollover + (currentNet > 0 ? currentNet : 0) - allTimeSavingsExp);
+  const remainingRollover = Math.max(0, lastMonthBalance - savingsExp);
+  const totalSavings = isFirst ? 0 : Math.max(0, remainingRollover + (currentNet > 0 ? currentNet : 0));
 
   return {
     monthKey,
     prevKey,
     prevMonthLabel: getMonthYearLabel(prevKey),
     currentMonthLabel: getMonthYearLabel(monthKey),
-    rawRollover,
-    pastSavingsExp,
-    lastMonthBalance: rolloverFromLastMonth,
+    lastMonthBalance,
     savingsFundedExp: savingsExp,
-    allTimeSavingsExp,
-    totalSavingsSpentUpToNow: allTimeSavingsExp,
+    allTimeSavingsExp: savingsExp,
     remainingRollover,
     currentInc,
     currentExp,
     incomeFundedExp: incomeExp,
     currentNet,
-    totalSavings
+    totalSavings,
+    isFirstMonth: isFirst
   };
 }
 
@@ -941,29 +1081,40 @@ function handleParsed(p) {
       <span class="pr-field">Source: <b>${paidFrom === 'savings' ? '🏦 Savings' : '💵 Income'}</b></span>
     </div>`;
   }
+  if (!state.timetableTasks) state.timetableTasks = [];
+  const todayKey = typeof getActualTodayKey === "function" ? getActualTodayKey() : new Date().toISOString().split("T")[0];
+  const periods = (state.timetablePeriods && state.timetablePeriods.length) ? state.timetablePeriods : (typeof getDefaultTimetablePeriods === "function" ? getDefaultTimetablePeriods() : []);
+  const periodId = periods.length > 0 ? periods[0].id : "period_1";
+  state.timetableTasks.push({
+    id: Date.now(),
+    title: p.title,
+    periodId: periodId,
+    date: todayKey,
+    priority: p.priority || "medium",
+    done: false,
+    createdAt: new Date().toISOString()
+  });
   state.tasks.unshift({ id: Date.now(), title: p.title, priority: p.priority, deadline: p.deadline, done: false });
   saveSessionData();
-  return `<div class="pr-row"><span class="pr-field">Type: <b>Task</b></span><span class="pr-field">Title: <b>${p.title}</b></span><span class="pr-field">Priority: <b>${p.priority.toUpperCase()}</b></span></div>`;
+  return `<div class="pr-row"><span class="pr-field">Type: <b>Daily Task</b></span><span class="pr-field">Title: <b>${p.title}</b></span><span class="pr-field">Priority: <b>${p.priority.toUpperCase()}</b></span></div>`;
 }
 
 /* ===== NAV ICONS ===== */
 const NAV_ICONS = {
   Dashboard: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>`,
   Finance: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 19V10"/><path d="M10 19V5"/><path d="M16 19v-7"/><path d="M20 19H4"/></svg>`,
-  "Health & Wellness": `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l8.72-8.72 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`,
-  Productivity: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>`,
-  Tasks: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>`,
+  Productivity: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14h4"/><path d="M8 18h8"/></svg>`,
+  Tasks: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14h4"/><path d="M8 18h8"/></svg>`,
   Bills: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1z"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="16" y2="10"/><line x1="8" y1="14" x2="12" y2="14"/></svg>`,
   Documents: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>`,
   Appointments: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`,
   Goals: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>`,
-  Assets: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/></svg>`,
   "Notes & Journal": `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>`,
   Contacts: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
   Password: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`
 };
 
-const views = ["Dashboard", "Finance", "Bills", "Health & Wellness", "Productivity", "Documents", "Appointments", "Assets", "Notes & Journal", "Contacts", "Password"];
+const views = ["Dashboard", "Finance", "Bills", "Productivity", "Documents", "Appointments", "Notes & Journal", "Contacts", "Password"];
 let activeView = "Dashboard";
 
 /* ==========================================================================
@@ -1052,6 +1203,12 @@ const TRANSLATIONS = {
     "Cancel": "Cancel",
     "Save Record": "Save Record",
     "No completed historical months recorded yet. As months conclude, their closing balances appear here automatically.": "No completed historical months recorded yet. As months conclude, their closing balances appear here automatically.",
+    "First Month Active": "First Month Active",
+    "Fresh account • History activates after this month": "Fresh account • History activates after this month",
+    "Monthly Balance History activates after your first month concludes": "Monthly Balance History activates after your first month concludes",
+    "Monthly Balance History will be available after your first month concludes!": "Monthly Balance History will be available after your first month concludes!",
+    "Welcome to Your First Month!": "Welcome to Your First Month!",
+    "Your account is fresh. Monthly Balance History activates automatically after your first month completes, tracking your closing balances month-over-month.": "Your account is fresh. Monthly Balance History activates automatically after your first month completes, tracking your closing balances month-over-month.",
 
     // User Profile Modal
     "User Profile & Account Session": "User Profile & Account Session",
@@ -1193,6 +1350,12 @@ const TRANSLATIONS = {
     "Cancel": "ரத்து செய்",
     "Save Record": "இருப்பைச் சேமி",
     "No completed historical months recorded yet. As months conclude, their closing balances appear here automatically.": "முடிவடைந்த மாதங்களின் பதிவுகள் எதுவும் இல்லை. மாதங்கள் முடிவடைந்ததும், அவற்றின் இறுதி இருப்புகள் தானாகவே இங்கு தோன்றும்.",
+    "First Month Active": "முதல் மாதம் செயலில்",
+    "Fresh account • History activates after this month": "புதிய கணக்கு • இந்த மாதத்திற்குப் பிறகு இருப்பு வரலாறு தொடங்கும்",
+    "Monthly Balance History activates after your first month concludes": "முதல் மாதம் முடிந்ததும் மாதாந்திர இருப்பு வரலாறு தொடங்கும்",
+    "Monthly Balance History will be available after your first month concludes!": "உங்கள் முதல் மாதம் முடிந்த பிறகு மாதாந்திர இருப்பு வரலாறு கிடைக்கும்!",
+    "Welcome to Your First Month!": "உங்கள் முதல் மாதத்திற்கு நல்வரவு!",
+    "Your account is fresh. Monthly Balance History activates automatically after your first month completes, tracking your closing balances month-over-month.": "உங்கள் கணக்கு புதியது. முதல் மாதம் முடிந்ததும் முந்தைய மாத இருப்புகளின் அடிப்படையில் மாதாந்திர இருப்பு வரலாறு தானாகவே தொடங்கும்.",
 
     // User Profile Modal
     "User Profile & Account Session": "பயனர் சுயவிவரம் & கணக்கு அமர்வு",
@@ -1334,6 +1497,12 @@ const TRANSLATIONS = {
     "Cancel": "रद्द करें",
     "Save Record": "रिकॉर्ड सहेजें",
     "No completed historical months recorded yet. As months conclude, their closing balances appear here automatically.": "कोई पूर्व पूर्ण महीने दर्ज नहीं हैं। माह समाप्त होने पर समापन शेष स्वतः यहाँ दिखाई देगा।",
+    "First Month Active": "पहला माह सक्रिय",
+    "Fresh account • History activates after this month": "नया खाता • इस माह के बाद इतिहास सक्रिय होगा",
+    "Monthly Balance History activates after your first month concludes": "पहला माह समाप्त होने के बाद मासिक शेष इतिहास सक्रिय होगा",
+    "Monthly Balance History will be available after your first month concludes!": "आपका पहला माह समाप्त होने के बाद मासिक शेष इतिहास उपलब्ध होगा!",
+    "Welcome to Your First Month!": "आपके पहले माह में स्वागत है!",
+    "Your account is fresh. Monthly Balance History activates automatically after your first month completes, tracking your closing balances month-over-month.": "आपका खाता नया है। पहला महीना पूरा होने के बाद मासिक शेष इतिहास पिछले महीने के शेष के आधार पर स्वचालित रूप से शुरू हो जाएगा।",
 
     // User Profile Modal
     "User Profile & Account Session": "उपयोगकर्ता प्रोफ़ाइल और खाता सत्र",
@@ -1472,6 +1641,12 @@ const TRANSLATIONS = {
     "Cancel": "റദ്ദാക്കുക",
     "Save Record": "സൂക്ഷിക്കുക",
     "No completed historical months recorded yet. As months conclude, their closing balances appear here automatically.": "പൂർത്തിയായ മാസങ്ങളൊന്നും ഇതുവരെ രേഖപ്പെടുത്തിയിട്ടില്ല.",
+    "First Month Active": "ആദ്യ മാസം സജീവം",
+    "Fresh account • History activates after this month": "പുതിയ അക്കൗണ്ട് • ഈ മാസത്തിന് ശേഷം ചരിത്രം ആരംഭിക്കും",
+    "Monthly Balance History activates after your first month concludes": "ആദ്യ മാസം കഴിഞ്ഞ ശേഷം പ്രതിമാസ ബാലൻസ് ചരിത്രം ലഭ്യമാകും",
+    "Monthly Balance History will be available after your first month concludes!": "ആദ്യ മാസം പൂർത്തിയായ ശേഷം പ്രതിമാസ ബാലൻസ് ചരിത്രം ലഭ്യമാകും!",
+    "Welcome to Your First Month!": "നിങ്ങളുടെ ആദ്യ മാസത്തിലേക്ക് സ്വാഗതം!",
+    "Your account is fresh. Monthly Balance History activates automatically after your first month completes, tracking your closing balances month-over-month.": "നിങ്ങളുടെ അക്കൗണ്ട് പുതിയതാണ്. ആദ്യ മാസം പൂർത്തിയായ ശേഷം പ്രതിമാസ ബാലൻസ് ചരിത്രം സ്വയമേവ ആരംഭിക്കും.",
 
     "User Profile & Account Session": "ഉപയോക്തൃ പ്രൊഫൈൽ & സെഷൻ",
     "User Profile & Account": "ഉപയോക്തൃ പ്രൊഫൈൽ",
@@ -1606,6 +1781,12 @@ const TRANSLATIONS = {
     "Cancel": "రద్దు చేయి",
     "Save Record": "రికార్డును సేవ్ చేయి",
     "No completed historical months recorded yet. As months conclude, their closing balances appear here automatically.": "పూర్తయిన నెలలేవీ ఇంకా నమోదు కాలేదు.",
+    "First Month Active": "మొదటి నెల క్రియాశీలకం",
+    "Fresh account • History activates after this month": "కొత్త ఖాతా • ఈ నెల తర్వాత చరిత్ర ప్రారంభమవుతుంది",
+    "Monthly Balance History activates after your first month concludes": "మొదటి నెల ముగిసిన తర్వాత బ్యాలెన్స్ చరిత్ర ప్రారంభమవుతుంది",
+    "Monthly Balance History will be available after your first month concludes!": "మీ మొదటి నెల ముగిసిన తర్వాత నెలవారీ బ్యాలెన్స్ చరిత్ర అందుబాటులో ఉంటుంది!",
+    "Welcome to Your First Month!": "మీ మొదటి నెలకు స్వాగతం!",
+    "Your account is fresh. Monthly Balance History activates automatically after your first month completes, tracking your closing balances month-over-month.": "మీ ఖాతా సరికొత్తది. మొదటి నెల ముగిసిన తర్వాత గత నెల బ్యాలెన్స్ ఆధారంగా చరిత్ర స్వయంచాలకంగా ప్రారంభమవుతుంది.",
 
     "User Profile & Account Session": "యూజర్ ప్రొఫైల్ మరియు సెషన్",
     "User Profile & Account": "యూజర్ ప్రొఫైల్",
@@ -1740,6 +1921,12 @@ const TRANSLATIONS = {
     "Cancel": "Cancelar",
     "Save Record": "Guardar registro",
     "No completed historical months recorded yet. As months conclude, their closing balances appear here automatically.": "Aún no hay meses históricos registrados.",
+    "First Month Active": "Primer mes activo",
+    "Fresh account • History activates after this month": "Cuenta nueva • El historial se activa después de este mes",
+    "Monthly Balance History activates after your first month concludes": "El historial de saldo se activa tras finalizar el primer mes",
+    "Monthly Balance History will be available after your first month concludes!": "¡El historial de saldo mensual estará disponible al terminar su primer mes!",
+    "Welcome to Your First Month!": "¡Bienvenido a su primer mes!",
+    "Your account is fresh. Monthly Balance History activates automatically after your first month completes, tracking your closing balances month-over-month.": "Su cuenta es nueva. El historial de saldo mensual se activará automáticamente al concluir su primer mes.",
 
     "User Profile & Account Session": "Perfil de usuario y sesión",
     "User Profile & Account": "Perfil y cuenta",
@@ -1874,6 +2061,12 @@ const TRANSLATIONS = {
     "Cancel": "Annuler",
     "Save Record": "Sauvegarder",
     "No completed historical months recorded yet. As months conclude, their closing balances appear here automatically.": "Aucun mois historique complété n'est encore enregistré.",
+    "First Month Active": "Premier mois actif",
+    "Fresh account • History activates after this month": "Nouveau compte • L'historique s'active après ce mois",
+    "Monthly Balance History activates after your first month concludes": "L'historique du solde s'active à la fin du premier mois",
+    "Monthly Balance History will be available after your first month concludes!": "L'historique du solde mensuel sera disponible à la fin de votre premier mois !",
+    "Welcome to Your First Month!": "Bienvenue dans votre premier mois !",
+    "Your account is fresh. Monthly Balance History activates automatically after your first month completes, tracking your closing balances month-over-month.": "Votre compte est nouveau. L'historique du solde mensuel s'activera automatiquement à la fin de votre premier mois.",
 
     "User Profile & Account Session": "Profil utilisateur & session",
     "User Profile & Account": "Profil & compte",
@@ -2584,17 +2777,19 @@ function renderMain() {
 
   if (activeView === "Dashboard") main.innerHTML = viewDashboard();
   else if (activeView === "Finance") main.innerHTML = viewFinance();
-  else if (activeView === "Health & Wellness") main.innerHTML = viewHealthAndWellness();
-  else if (activeView === "Productivity" || activeView === "Tasks") main.innerHTML = viewTasks();
   else if (activeView === "Bills") main.innerHTML = viewBills();
+  else if (activeView === "Productivity" || activeView === "Tasks") main.innerHTML = viewProductivityTimetable();
   else if (activeView === "Documents") main.innerHTML = viewDocuments();
   else if (activeView === "Appointments") main.innerHTML = viewAppointments();
   else if (activeView === "Goals") main.innerHTML = viewGoals();
-  else if (activeView === "Assets") main.innerHTML = viewAssets();
   else if (activeView === "Notes & Journal") main.innerHTML = viewNotesAndJournal();
   else if (activeView === "Contacts") main.innerHTML = viewContacts();
   else if (activeView === "Password") main.innerHTML = viewPassword();
   else if (activeView === "Balance Settings" || activeView === "Settings") main.innerHTML = viewBalanceSettings();
+  else {
+    activeView = "Dashboard";
+    main.innerHTML = viewDashboard();
+  }
   attachHandlers();
   checkAlerts();
   if (typeof applyPageTranslations === "function") {
@@ -2649,8 +2844,8 @@ function viewDashboard() {
   const totalUpcoming = upcomingBills.length + upcomingAppts.length;
 
   return `
-  <!-- Stat Cards (4 Columns) -->
-  <div class="stat-cards-row">
+  <!-- Stat Cards -->
+  <div class="stat-cards-row ${savingsData.isFirstMonth ? 'three-cards' : ''}">
     <div class="stat-block c-green">
       <div class="sb-top">
         <div class="sb-icon">↙</div>
@@ -2666,7 +2861,7 @@ function viewDashboard() {
       </div>
       <div class="sb-label">${t('MONTHLY EXPENSES')}</div>
       <div class="sb-value num">${fmt(incomeExp)}</div>
-      ${savingsExp > 0 ? `<div style="font-size:10.5px; color:#4f46e5; font-weight:600; margin-top:2px;">+${fmt(savingsExp)} from savings</div>` : ''}
+      ${!savingsData.isFirstMonth && savingsExp > 0 ? `<div style="font-size:10.5px; color:#4f46e5; font-weight:600; margin-top:2px;">+${fmt(savingsExp)} from savings</div>` : ''}
     </div>
     <div class="stat-block c-indigo">
       <div class="sb-top">
@@ -2676,6 +2871,7 @@ function viewDashboard() {
       <div class="sb-label">${t('NET BALANCE')}</div>
       <div class="sb-value num">${fmt(bal)}</div>
     </div>
+    ${!savingsData.isFirstMonth ? `
     <div class="stat-block c-gold" style="cursor: pointer;" onclick="goToBalanceSettingsPage()" title="${t('Click to view & manage Monthly Balance History')}">
       <div class="sb-top">
         <div class="sb-icon">🏦</div>
@@ -2695,6 +2891,7 @@ function viewDashboard() {
         </div>
       ` : '')}
     </div>
+    ` : ''}
   </div>
 
   <!-- Charts Row (2 Columns) -->
@@ -3215,77 +3412,479 @@ function viewFinance() {
   </div>`;
 }
 
-/* ===== 3. TASKS VIEW ===== */
-function viewTasks() {
-  const pending = state.tasks.filter(t => !t.done);
-  const completed = state.tasks.filter(t => t.done);
-  const highPriority = state.tasks.filter(t => t.priority === "high" && !t.done).length;
+/* ==========================================================================
+   3. DAILY TIMETABLE & PRODUCTIVITY SESSIONS (PERIODS)
+   ========================================================================== */
+
+function getActualTodayKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+let selectedTimetableDate = getActualTodayKey();
+
+function changeTimetableDate(dateStr) {
+  if (dateStr) {
+    selectedTimetableDate = dateStr;
+    renderMain();
+  }
+}
+
+function shiftTimetableDate(days) {
+  const [y, m, d] = (selectedTimetableDate || getActualTodayKey()).split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + days);
+  selectedTimetableDate = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+  renderMain();
+}
+
+function resetTimetableToToday() {
+  selectedTimetableDate = getActualTodayKey();
+  renderMain();
+}
+
+function formatTime12h(time24) {
+  if (!time24) return "";
+  if (time24.includes("AM") || time24.includes("PM")) return time24;
+  if (!time24.includes(":")) return time24;
+  const [h, m] = time24.split(":").map(Number);
+  const ampm = (h >= 12) ? "PM" : "AM";
+  const hour12 = h % 12 || 12;
+  return `${String(hour12).padStart(2, "0")}:${String(m || 0).padStart(2, "0")} ${ampm}`;
+}
+
+function setTaskTimeAmPm(which, val) {
+  const amBtn = document.getElementById(which === "start" ? "ttStartAmBtn" : "ttEndAmBtn");
+  const pmBtn = document.getElementById(which === "start" ? "ttStartPmBtn" : "ttEndPmBtn");
+  const hiddenInput = document.getElementById(which === "start" ? "ttStartAmPm" : "ttEndAmPm");
+
+  if (hiddenInput) hiddenInput.value = val;
+  if (amBtn) amBtn.classList.toggle("active", val === "AM");
+  if (pmBtn) pmBtn.classList.toggle("active", val === "PM");
+}
+window.setTaskTimeAmPm = setTaskTimeAmPm;
+
+function convert12to24(hourStr, minStr, ampm) {
+  let h = parseInt(hourStr, 10);
+  if (isNaN(h)) h = 9;
+  const m = String(minStr || "00").padStart(2, "0");
+  if (ampm === "AM") {
+    if (h === 12) h = 0;
+  } else if (ampm === "PM") {
+    if (h !== 12) h += 12;
+  }
+  return `${String(h).padStart(2, "0")}:${m}`;
+}
+
+function convert24to12(time24) {
+  if (!time24 || !time24.includes(":")) {
+    return { hour: "9", min: "00", ampm: "AM" };
+  }
+  const [h24, m] = time24.split(":").map(Number);
+  const ampm = (h24 >= 12) ? "PM" : "AM";
+  const hour12 = h24 % 12 || 12;
+  const snappedM = Math.min(55, Math.max(0, Math.round((m || 0) / 5) * 5));
+  return {
+    hour: String(hour12),
+    min: String(snappedM).padStart(2, "0"),
+    ampm
+  };
+}
+
+function getPeriodDurationText(startTime, endTime) {
+  if (!startTime || !endTime) return "";
+  const [h1, m1] = startTime.split(":").map(Number);
+  const [h2, m2] = endTime.split(":").map(Number);
+  const totalMin = (h2 * 60 + m2) - (h1 * 60 + m1);
+  if (totalMin <= 0) return "";
+  const hours = Math.floor(totalMin / 60);
+  const mins = totalMin % 60;
+  if (hours > 0 && mins > 0) return `${hours}h ${mins}m`;
+  if (hours > 0) return `${hours}h`;
+  return `${mins}m`;
+}
+
+function isTaskLiveNow(task) {
+  if (selectedTimetableDate !== getActualTodayKey()) return false;
+  if (!task || !task.startTime || task.done) return false;
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const [h1, m1] = task.startTime.split(":").map(Number);
+  const endParts = (task.endTime || task.startTime).split(":").map(Number);
+  const startMin = (h1 || 0) * 60 + (m1 || 0);
+  const endMin = (endParts[0] || 0) * 60 + (endParts[1] || 0);
+  return currentMinutes >= startMin && currentMinutes <= endMin;
+}
+
+function getTimetableTasksForDate(dateKey) {
+  if (!state.timetableTasks || !Array.isArray(state.timetableTasks)) {
+    state.timetableTasks = [];
+  }
+  const tasks = state.timetableTasks.filter(t => t.date === dateKey);
+  // Sort chronologically by startTime, then endTime
+  return tasks.sort((a, b) => {
+    const tA = a.startTime || "99:99";
+    const tB = b.startTime || "99:99";
+    if (tA !== tB) return tA.localeCompare(tB);
+    const endA = a.endTime || tA;
+    const endB = b.endTime || tB;
+    return endA.localeCompare(endB);
+  });
+}
+
+function toggleTimetableTaskDone(taskId, isDone) {
+  if (!state.timetableTasks) state.timetableTasks = [];
+  const t = state.timetableTasks.find(item => item.id === taskId);
+  if (t) {
+    t.done = Boolean(isDone);
+    t.completedAt = isDone ? new Date().toISOString() : null;
+    saveSessionData();
+    renderMain();
+    showToast(isDone ? "Task finished! Great job! 🎉" : "Task marked pending");
+  }
+}
+
+function deleteTimetableTask(taskId) {
+  if (!state.timetableTasks) return;
+  state.timetableTasks = state.timetableTasks.filter(t => t.id !== taskId);
+  saveSessionData();
+  renderMain();
+  showToast("Task removed from timetable");
+}
+
+function copyUnfinishedTasksFromYesterday() {
+  const [y, m, d] = (selectedTimetableDate || getActualTodayKey()).split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() - 1);
+  const yestKey = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+
+  const yestUnfinished = (state.timetableTasks || []).filter(t => t.date === yestKey && !t.done);
+  if (yestUnfinished.length === 0) {
+    showToast("No pending tasks from yesterday to copy!");
+    return;
+  }
+
+  let copiedCount = 0;
+  yestUnfinished.forEach(t => {
+    const exists = (state.timetableTasks || []).some(cur => cur.date === selectedTimetableDate && cur.title === t.title && cur.startTime === t.startTime);
+    if (!exists) {
+      state.timetableTasks.push({
+        id: Date.now() + Math.floor(Math.random() * 10000),
+        title: t.title,
+        date: selectedTimetableDate,
+        startTime: t.startTime || "09:00",
+        endTime: t.endTime || "10:00",
+        priority: t.priority || "medium",
+        notes: t.notes || "",
+        done: false,
+        copiedFrom: yestKey
+      });
+      copiedCount++;
+    }
+  });
+
+  saveSessionData();
+  renderMain();
+  showToast(`Copied ${copiedCount} pending tasks to today!`);
+}
+
+/* Add/Edit Task Modal Helpers */
+function openAddTimetableTaskModal(defaultDate) {
+  const modal = document.getElementById("timetableTaskModal");
+  if (!modal) return;
+
+  const targetDate = defaultDate || selectedTimetableDate || getActualTodayKey();
+  const currentTasks = getTimetableTasksForDate(targetDate);
+
+  let defStart24 = "09:00";
+  let defEnd24 = "10:00";
+  if (currentTasks.length > 0) {
+    const lastTask = currentTasks[currentTasks.length - 1];
+    if (lastTask.endTime && lastTask.endTime.includes(":")) {
+      defStart24 = lastTask.endTime;
+      const [h, m] = defStart24.split(":").map(Number);
+      const nextH = Math.min(23, h + 1);
+      defEnd24 = `${String(nextH).padStart(2, "0")}:${String(m || 0).padStart(2, "0")}`;
+    }
+  } else {
+    const now = new Date();
+    const curH = now.getHours();
+    defStart24 = `${String(curH).padStart(2, "0")}:00`;
+    defEnd24 = `${String(Math.min(23, curH + 1)).padStart(2, "0")}:00`;
+  }
+
+  const s12 = convert24to12(defStart24);
+  const e12 = convert24to12(defEnd24);
+
+  const idInput = document.getElementById("ttTaskId");
+  const titleInput = document.getElementById("ttTaskTitleInput");
+  const dateInput = document.getElementById("ttTaskDateInput");
+  const startHour = document.getElementById("ttStartHour");
+  const startMin = document.getElementById("ttStartMin");
+  const endHour = document.getElementById("ttEndHour");
+  const endMin = document.getElementById("ttEndMin");
+  const prioSelect = document.getElementById("ttTaskPrioritySelect");
+  const notesInput = document.getElementById("ttTaskNotesInput");
+  const titleHeader = document.getElementById("ttTaskModalTitle");
+  const subHeader = document.getElementById("ttTaskModalSubtitle");
+
+  if (idInput) idInput.value = "";
+  if (titleHeader) titleHeader.textContent = "Add Task to Timetable";
+  if (subHeader) subHeader.textContent = "Set task details and scheduled time";
+  if (titleInput) titleInput.value = "";
+  if (dateInput) dateInput.value = targetDate;
+
+  if (startHour) startHour.value = s12.hour;
+  if (startMin) startMin.value = s12.min;
+  setTaskTimeAmPm('start', s12.ampm);
+
+  if (endHour) endHour.value = e12.hour;
+  if (endMin) endMin.value = e12.min;
+  setTaskTimeAmPm('end', e12.ampm);
+
+  if (prioSelect) prioSelect.value = "medium";
+  if (notesInput) notesInput.value = "";
+
+  modal.style.display = "flex";
+  if (titleInput) titleInput.focus();
+}
+
+function openEditTimetableTaskModal(taskId) {
+  if (!state.timetableTasks) state.timetableTasks = [];
+  const t = state.timetableTasks.find(item => item.id === taskId);
+  if (!t) return;
+
+  const modal = document.getElementById("timetableTaskModal");
+  if (!modal) return;
+
+  const s12 = convert24to12(t.startTime || "09:00");
+  const e12 = convert24to12(t.endTime || t.startTime || "10:00");
+
+  const idInput = document.getElementById("ttTaskId");
+  const titleInput = document.getElementById("ttTaskTitleInput");
+  const dateInput = document.getElementById("ttTaskDateInput");
+  const startHour = document.getElementById("ttStartHour");
+  const startMin = document.getElementById("ttStartMin");
+  const endHour = document.getElementById("ttEndHour");
+  const endMin = document.getElementById("ttEndMin");
+  const prioSelect = document.getElementById("ttTaskPrioritySelect");
+  const notesInput = document.getElementById("ttTaskNotesInput");
+  const titleHeader = document.getElementById("ttTaskModalTitle");
+  const subHeader = document.getElementById("ttTaskModalSubtitle");
+
+  if (idInput) idInput.value = t.id;
+  if (titleHeader) titleHeader.textContent = "Edit Timetable Task & Time";
+  if (subHeader) subHeader.textContent = "Update task details or change scheduled time (AM/PM)";
+  if (titleInput) titleInput.value = t.title || "";
+  if (dateInput) dateInput.value = t.date || selectedTimetableDate || getActualTodayKey();
+
+  if (startHour) startHour.value = s12.hour;
+  if (startMin) startMin.value = s12.min;
+  setTaskTimeAmPm('start', s12.ampm);
+
+  if (endHour) endHour.value = e12.hour;
+  if (endMin) endMin.value = e12.min;
+  setTaskTimeAmPm('end', e12.ampm);
+
+  if (prioSelect) prioSelect.value = t.priority || "medium";
+  if (notesInput) notesInput.value = t.notes || "";
+
+  modal.style.display = "flex";
+}
+
+function closeTimetableTaskModal() {
+  const modal = document.getElementById("timetableTaskModal");
+  if (modal) modal.style.display = "none";
+}
+
+function submitTimetableTask(e) {
+  if (e && typeof e.preventDefault === "function") e.preventDefault();
+  const idStr = String(document.getElementById("ttTaskId")?.value ?? "").trim();
+  const title = String(document.getElementById("ttTaskTitleInput")?.value ?? "").trim();
+  const date = String(document.getElementById("ttTaskDateInput")?.value ?? "").trim();
+
+  // Read 12-hour values with AM/PM
+  const sHour = document.getElementById("ttStartHour")?.value || "9";
+  const sMin = document.getElementById("ttStartMin")?.value || "00";
+  const sAmPm = document.getElementById("ttStartAmPm")?.value || "AM";
+  const startTime = convert12to24(sHour, sMin, sAmPm);
+
+  const eHour = document.getElementById("ttEndHour")?.value || sHour;
+  const eMin = document.getElementById("ttEndMin")?.value || sMin;
+  const eAmPm = document.getElementById("ttEndAmPm")?.value || sAmPm;
+  const endTime = convert12to24(eHour, eMin, eAmPm);
+
+  const priority = document.getElementById("ttTaskPrioritySelect")?.value || "medium";
+  const notes = String(document.getElementById("ttTaskNotesInput")?.value ?? "").trim();
+
+  if (!title || !date) {
+    showToast("Please enter task title and date");
+    return;
+  }
+
+  if (!state.timetableTasks) state.timetableTasks = [];
+
+  if (idStr) {
+    const existing = state.timetableTasks.find(t => String(t.id) === String(idStr));
+    if (existing) {
+      existing.title = title;
+      existing.date = date;
+      existing.startTime = startTime;
+      existing.endTime = endTime;
+      existing.priority = priority;
+      existing.notes = notes;
+      showToast("Timetable task updated!");
+    }
+  } else {
+    state.timetableTasks.push({
+      id: Date.now(),
+      title,
+      date,
+      startTime,
+      endTime,
+      priority,
+      notes,
+      done: false,
+      createdAt: new Date().toISOString()
+    });
+    showToast("Task added to timetable!");
+  }
+
+  saveSessionData();
+  closeTimetableTaskModal();
+  renderMain();
+}
+
+
+/* Main Timetable View */
+function viewProductivityTimetable() {
+  if (!state.timetableTasks) state.timetableTasks = [];
+
+  const todayKey = getActualTodayKey();
+  if (!selectedTimetableDate) selectedTimetableDate = todayKey;
+
+  const dayTasks = getTimetableTasksForDate(selectedTimetableDate);
+  const doneTasks = dayTasks.filter(t => t.done);
+  const totalTasks = dayTasks.length;
+  const pct = totalTasks > 0 ? Math.round((doneTasks.length / totalTasks) * 100) : 0;
+
+  const [y, m, d] = selectedTimetableDate.split("-").map(Number);
+  const dateObj = new Date(y, m - 1, d);
+  const isToday = selectedTimetableDate === todayKey;
+  const isTomorrow = (() => {
+    const tm = new Date();
+    tm.setDate(tm.getDate() + 1);
+    return selectedTimetableDate === `${tm.getFullYear()}-${String(tm.getMonth() + 1).padStart(2, "0")}-${String(tm.getDate()).padStart(2, "0")}`;
+  })();
+  const dayPrefix = isToday ? "Today" : isTomorrow ? "Tomorrow" : "";
+  const dateFormatted = dateObj.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric", year: "numeric" });
 
   return `
-  <div class="stat-cards-row">
-    <div class="soft-stat-block blue">
-      <div class="ss-top"><span class="ss-label">Total Tasks</span><div class="ss-icon">📋</div></div>
-      <div class="ss-value num">${state.tasks.length}</div>
-      <div class="ss-sub">${pending.length} pending, ${completed.length} done</div>
-    </div>
-    <div class="soft-stat-block red">
-      <div class="ss-top"><span class="ss-label">High Priority</span><div class="ss-icon">🔥</div></div>
-      <div class="ss-value num">${highPriority}</div>
-      <div class="ss-sub">Urgent action required</div>
-    </div>
-    <div class="soft-stat-block green">
-      <div class="ss-top"><span class="ss-label">Completion Rate</span><div class="ss-icon">✓</div></div>
-      <div class="ss-value num">${state.tasks.length ? Math.round((completed.length / state.tasks.length) * 100) : 0}%</div>
-      <div class="ss-sub">${completed.length} completed tasks</div>
-    </div>
-    <div class="soft-stat-block yellow">
-      <div class="ss-top"><span class="ss-label">Pending</span><div class="ss-icon">⏰</div></div>
-      <div class="ss-value num">${pending.length}</div>
-      <div class="ss-sub">Remaining tasks</div>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-header">
+  <!-- Timetable Header Bar -->
+  <div class="timetable-header-card">
+    <div class="timetable-top-bar">
       <div>
-        <h2>Tasks & Priorities</h2>
-        <div class="sub">Manage to-do list</div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <h2 style="font-size: 20px; font-weight: 800; color: #0f172a; margin: 0;">Daily Timetable</h2>
+          ${dayPrefix ? `<span style="background: #e0e7ff; color: #4338ca; font-weight: 800; font-size: 11.5px; padding: 2px 10px; border-radius: 20px;">${dayPrefix}</span>` : ''}
+        </div>
+        <div style="font-size: 13.5px; color: var(--text-muted); margin-top: 4px;">${dateFormatted}</div>
+      </div>
+
+      <div class="timetable-date-controls">
+        <button type="button" class="tt-nav-btn" onclick="shiftTimetableDate(-1)" title="Previous day">◀ Prev Day</button>
+        <button type="button" class="tt-nav-btn ${isToday ? 'primary' : ''}" onclick="resetTimetableToToday()" title="Jump to today">📅 Today</button>
+        <button type="button" class="tt-nav-btn" onclick="shiftTimetableDate(1)" title="Next day">Next Day ▶</button>
+        <input type="date" class="tt-date-picker-input" value="${selectedTimetableDate}" onchange="changeTimetableDate(this.value)" aria-label="Select date">
+      </div>
+
+      <div class="timetable-actions">
+        <button type="button" class="tt-action-btn secondary" onclick="copyUnfinishedTasksFromYesterday()" title="Copy uncompleted tasks from yesterday">
+          📋 Copy From Yesterday
+        </button>
+        <button type="button" class="tt-action-btn accent" onclick="openAddTimetableTaskModal()" title="Add new task with specific time">
+          + Add Task
+        </button>
       </div>
     </div>
 
-    <div style="display:flex; flex-direction:column; gap:10px;">
-      ${state.tasks.map(t => `
-        <div class="upcoming-row" style="background: ${t.done ? '#f8fafc' : '#ffffff'}; opacity:${t.done ? 0.7 : 1};">
-          <div class="ur-left">
-            <input type="checkbox" data-id="${t.id}" class="taskCheck" ${t.done ? 'checked' : ''} style="width:18px; height:18px; accent-color:#4f46e5; cursor:pointer;">
-            <div>
-              <div class="ur-title" style="text-decoration: ${t.done ? 'line-through' : 'none'};">${t.title}</div>
-              <div class="ur-sub">Deadline: ${t.deadline}</div>
+    <!-- Daily Progress Track -->
+    <div class="timetable-progress-box">
+      <div class="tt-progress-header">
+        <div class="tt-progress-title">
+          <span>Daily Completion Progress</span>
+          <span style="font-size: 12px; font-weight: 600; color: #64748b;">(Refreshes daily for each date)</span>
+        </div>
+        <div class="tt-progress-stats">
+          ${doneTasks.length} / ${totalTasks} Tasks Finished (${pct}%)
+        </div>
+      </div>
+      <div class="tt-progress-track">
+        <div class="tt-progress-fill" style="width: ${pct}%;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Timetable Schedule List (down with time) -->
+  ${dayTasks.length === 0 ? `
+    <div class="tt-empty-schedule-card">
+      <div class="tt-empty-schedule-icon">📅</div>
+      <div class="tt-empty-schedule-title">No tasks scheduled for ${isToday ? 'today' : dateFormatted}</div>
+      <div class="tt-empty-schedule-sub">Click <b>+ Add Task</b> to schedule your tasks with specific start and end times in your timetable.</div>
+      <button type="button" class="tt-action-btn accent" onclick="openAddTimetableTaskModal()" style="padding: 10px 22px; font-size: 14px;">
+        + Add Task to Timetable
+      </button>
+    </div>
+  ` : `
+    <div class="timetable-schedule-card">
+      <div class="timetable-schedule-header">
+        <div>Time Slot</div>
+        <div>Task Details</div>
+        <div>Priority</div>
+        <div style="text-align: right;">Actions</div>
+      </div>
+      <div class="timetable-schedule-list">
+        ${dayTasks.map(t => {
+          const isLive = isTaskLiveNow(t);
+          const timeText = t.startTime ? (t.endTime && t.endTime !== t.startTime ? `${formatTime12h(t.startTime)} – ${formatTime12h(t.endTime)}` : formatTime12h(t.startTime)) : 'Anytime';
+          const duration = (t.startTime && t.endTime) ? getPeriodDurationText(t.startTime, t.endTime) : '';
+          return `
+          <div class="timetable-schedule-row ${t.done ? 'is-done' : ''} ${isLive ? 'is-live' : ''}">
+            <div class="tt-time-col">
+              <div class="tt-time-slot">🕒 ${timeText}</div>
+              <div class="tt-time-meta">
+                ${duration ? `<span class="tt-duration-badge">${duration}</span>` : ''}
+                ${isLive ? `<span class="tt-live-pill">🟢 LIVE NOW</span>` : ''}
+              </div>
+            </div>
+            <div class="tt-task-col">
+              <div class="tt-task-heading">${escapeHtml(t.title)}</div>
+              ${t.notes ? `<div class="tt-task-desc">${escapeHtml(t.notes)}</div>` : ''}
+            </div>
+            <div class="tt-priority-col">
+              <span class="priority-pill ${t.priority || 'medium'}">${t.priority || 'medium'}</span>
+            </div>
+            <div class="tt-actions-cluster">
+              <button type="button" class="tt-tick-btn ${t.done ? 'is-done' : ''}" onclick="toggleTimetableTaskDone(${t.id}, ${!t.done})" title="${t.done ? 'Finished (click to mark pending)' : 'Mark as finished'}" aria-label="${t.done ? 'Mark pending' : 'Mark finished'}">
+                <span class="tt-tick-check">${t.done ? '✓' : ''}</span>
+              </button>
+              <button type="button" class="tt-btn-edit" onclick="openEditTimetableTaskModal(${t.id})" title="Edit task details & time">
+                ✎ Edit
+              </button>
+              <button type="button" class="tt-btn-del" onclick="deleteTimetableTask(${t.id})" title="Delete task">
+                ✕
+              </button>
             </div>
           </div>
-          <div class="ur-right">
-            <span class="status-badge ${t.priority === 'high' ? 'urgent' : 'upcoming'}">${t.priority}</span>
-          </div>
-        </div>
-      `).join("")}
-      ${state.tasks.length === 0 ? `
-        <div style="padding: 24px; text-align:center; color:var(--text-muted);">
-          No tasks added yet. Create a task below or type in Quick Entry!
-        </div>` : ''}
+          `;
+        }).join("")}
+      </div>
     </div>
-
-    <div class="addrow">
-      <input type="text" id="taskTitleInput" placeholder="Add a new task...">
-      <select id="taskPrioritySelect">
-        <option value="high">High Priority</option>
-        <option value="medium" selected>Medium Priority</option>
-        <option value="low">Low Priority</option>
-      </select>
-      <input type="text" id="taskDeadlineInput" placeholder="Deadline" style="width:140px;">
-      <button id="taskAddBtn">Add Task</button>
-    </div>
-  </div>`;
+  `}
+  `;
 }
+
+const viewTasks = viewProductivityTimetable;
 
 /* ===== 4. BILLS & SUBSCRIPTIONS LOGIC & VIEW ===== */
 
@@ -5760,8 +6359,8 @@ function attachHandlers() {
 
   // Close modal when clicking outside modal container or pressing Escape
   const txModalEl = $("txModal");
-  if (txModalEl && !txModalEl.dataset.backdropBound) {
-    txModalEl.dataset.backdropBound = "true";
+  if (txModalEl && (!txModalEl.dataset || !txModalEl.dataset.backdropBound)) {
+    if (txModalEl.dataset) txModalEl.dataset.backdropBound = "true";
     txModalEl.addEventListener("click", (e) => {
       if (e.target === txModalEl) closeTxModal();
     });
@@ -6323,7 +6922,7 @@ async function enterApp(email, name) {
     try {
       const cloudData = await window.Firebase.fetchUserDataFromCloud(normEmail);
       if (cloudData && typeof cloudData === "object" && Object.keys(cloudData).length > 0) {
-        usersDB[normEmail].data = { ...blankState(), ...cloudData };
+        usersDB[normEmail].data = sanitizeUserState({ ...blankState(), ...cloudData }, normEmail);
         if (cloudData.profile) {
           if (cloudData.profile.name) usersDB[normEmail].name = cloudData.profile.name;
           if (cloudData.profile.phone) usersDB[normEmail].phone = cloudData.profile.phone;
@@ -6336,7 +6935,11 @@ async function enterApp(email, name) {
     }
   }
 
-  state = usersDB[normEmail].data || blankState();
+  state = sanitizeUserState(usersDB[normEmail].data || blankState(), normEmail);
+  usersDB[normEmail].data = state;
+  if (!state.startMonth) {
+    state.startMonth = getActualCurrentMonthKey();
+  }
   if (!state.profile) {
     state.profile = {
       name: usersDB[normEmail].name || name || normEmail.split("@")[0],
@@ -6354,19 +6957,29 @@ async function enterApp(email, name) {
   if (window.Firebase && typeof window.Firebase.subscribeToCloudData === "function") {
     window.Firebase.subscribeToCloudData(normEmail, cloudData => {
       if (cloudData && typeof cloudData === "object" && Object.keys(cloudData).length > 0) {
-        state = { ...blankState(), ...state, ...cloudData };
-        if (cloudData.profile) {
-          if (cloudData.profile.name) usersDB[normEmail].name = cloudData.profile.name;
-          if (cloudData.profile.phone) usersDB[normEmail].phone = cloudData.profile.phone;
-          if (cloudData.profile.bio) usersDB[normEmail].bio = cloudData.profile.bio;
-        } else if (state.profile) {
-          if (state.profile.name) usersDB[normEmail].name = state.profile.name;
-          if (state.profile.phone) usersDB[normEmail].phone = state.profile.phone;
-          if (state.profile.bio) usersDB[normEmail].bio = state.profile.bio;
-        }
-        usersDB[normEmail].data = state;
+        state = sanitizeUserState({ ...blankState(), ...state, ...cloudData }, normEmail);
         
-        const displayName = usersDB[normEmail].name || (state.profile && state.profile.name) || normEmail.split("@")[0];
+        // Ensure usersDB record exists safely
+        if (!usersDB[normEmail]) {
+          usersDB[normEmail] = {
+            name: (cloudData.profile && cloudData.profile.name) || (state.profile && state.profile.name) || normEmail.split("@")[0],
+            data: state
+          };
+        }
+        if (usersDB[normEmail]) {
+          if (cloudData.profile) {
+            if (cloudData.profile.name) usersDB[normEmail].name = cloudData.profile.name;
+            if (cloudData.profile.phone) usersDB[normEmail].phone = cloudData.profile.phone;
+            if (cloudData.profile.bio) usersDB[normEmail].bio = cloudData.profile.bio;
+          } else if (state.profile) {
+            if (state.profile.name) usersDB[normEmail].name = state.profile.name;
+            if (state.profile.phone) usersDB[normEmail].phone = state.profile.phone;
+            if (state.profile.bio) usersDB[normEmail].bio = state.profile.bio;
+          }
+          usersDB[normEmail].data = state;
+        }
+        
+        const displayName = (usersDB[normEmail] && usersDB[normEmail].name) || (state.profile && state.profile.name) || normEmail.split("@")[0];
         if (document.getElementById("profileName")) document.getElementById("profileName").textContent = displayName;
         if (document.getElementById("profileEmail")) document.getElementById("profileEmail").textContent = normEmail;
         if (document.getElementById("profileAvatar")) document.getElementById("profileAvatar").textContent = displayName.split(" ").map(n => n[0]).join("").toUpperCase() || "U";
@@ -6433,10 +7046,23 @@ function openUserProfileModal() {
     langLabel.textContent = names[currentLanguage] || currentLanguage;
   }
 
+  const monthlyBalNav = document.getElementById("profileMonthlyBalanceItem");
+  if (monthlyBalNav) {
+    if (isUserFirstMonth()) {
+      monthlyBalNav.style.display = "none";
+    } else {
+      monthlyBalNav.style.display = "flex";
+    }
+  }
+
   modal.style.display = "flex";
 }
 
 function goToBalanceSettingsPage() {
+  if (isUserFirstMonth()) {
+    showToast(t("Monthly Balance History will be available after your first month concludes!"));
+    return;
+  }
   closeUserProfileModal();
   activeView = "Balance Settings";
   renderNav();
@@ -6444,36 +7070,27 @@ function goToBalanceSettingsPage() {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-function getCompletedMonths() {
-  const currentKey = getCurrentFinanceMonthKey();
-  const set = new Set();
-  const startBal = getStartingBalance();
-  if (startBal.month && startBal.month < currentKey) {
-    set.add(startBal.month);
-  }
-  if (state.income) {
-    state.income.forEach(i => {
-      const k = getMonthYearKey(i.date);
-      if (k && k < currentKey) set.add(k);
-    });
-  }
-  if (state.expenses) {
-    state.expenses.forEach(e => {
-      const k = getMonthYearKey(e.date);
-      if (k && k < currentKey) set.add(k);
-    });
-  }
-  if (state.monthlyBalances) {
-    Object.keys(state.monthlyBalances).forEach(k => {
-      if (k && k < currentKey) set.add(k);
-    });
-  }
-  return Array.from(set).sort().reverse();
-}
-
 /* ===== DEDICATED MONTHLY BALANCE HISTORY VIEW ===== */
 function viewBalanceSettings() {
   if (!currentUser) return '<div class="card"><p>Please log in to view balance settings.</p></div>';
+
+  if (isUserFirstMonth()) {
+    return `
+    <div style="max-width: 640px; margin: 40px auto; padding: 32px 24px; background: #ffffff; border-radius: 16px; border: 1.5px solid #e2e8f0; text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.04);">
+      <div style="width: 56px; height: 56px; border-radius: 16px; background: #eff6ff; color: #3b82f6; display: flex; align-items: center; justify-content: center; font-size: 28px; margin: 0 auto 16px;">
+        🌱
+      </div>
+      <h2 style="font-size: 20px; font-weight: 800; color: #0f172a; margin-bottom: 8px;">${t('Welcome to Your First Month!')}</h2>
+      <p style="color: #64748b; font-size: 13.5px; line-height: 1.6; margin-bottom: 22px;">
+        ${t('Your account is fresh. Monthly Balance History activates automatically after your first month completes, tracking your closing balances month-over-month.')}
+      </p>
+      <button type="button" onclick="activeView='Dashboard';renderNav();renderMain();"
+        style="background: #4f46e5; color: #ffffff; border: none; padding: 10px 22px; border-radius: 10px; font-weight: 700; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; box-shadow: 0 2px 8px rgba(79,70,229,0.25);">
+        ${t('← Back to Dashboard')}
+      </button>
+    </div>
+    `;
+  }
 
   const currentMonth = getCurrentFinanceMonthKey();
   const completedMonths = getCompletedMonths();
@@ -6727,6 +7344,8 @@ window.submitEditCompletedBalance = submitEditCompletedBalance;
 window.resetCompletedBalance = resetCompletedBalance;
 window.toggleAddCustomMonthHistoryBox = toggleAddCustomMonthHistoryBox;
 window.submitCustomMonthHistory = submitCustomMonthHistory;
+window.isUserFirstMonth = isUserFirstMonth;
+window.getCompletedMonths = getCompletedMonths;
 
 function closeUserProfileModal() {
   const modal = document.getElementById("userProfileModal");
@@ -8689,9 +9308,15 @@ function handleGlobalSearch(query) {
     }
   });
 
-  (state.healthRecords || []).forEach(h => {
-    if ((h.title && h.title.toLowerCase().includes(q)) || (h.type && h.type.toLowerCase().includes(q)) || (h.doctor && h.doctor.toLowerCase().includes(q))) {
-      results.push({ category: "Health", title: h.title, date: h.date, status: h.type, view: "Health & Wellness" });
+  (state.timetableTasks || []).forEach(t => {
+    if ((t.title && t.title.toLowerCase().includes(q)) || (t.notes && t.notes.toLowerCase().includes(q))) {
+      results.push({ category: "Timetable", title: t.title, date: t.date || "", status: t.done ? "Done" : "Pending", view: "Productivity" });
+    }
+  });
+
+  (state.timetablePeriods || []).forEach(p => {
+    if (p.name && p.name.toLowerCase().includes(q)) {
+      results.push({ category: "Periods", title: p.name, date: `${p.startTime || ''} - ${p.endTime || ''}`, status: "Period", view: "Productivity" });
     }
   });
 
@@ -8704,20 +9329,6 @@ function handleGlobalSearch(query) {
   (state.contacts || []).forEach(c => {
     if ((c.name && c.name.toLowerCase().includes(q)) || (c.email && c.email.toLowerCase().includes(q)) || (c.phone && c.phone.includes(q))) {
       results.push({ category: "Contacts", title: c.name, date: c.lastContacted ? `Contacted: ${c.lastContacted}` : "", status: c.relationship, view: "Contacts" });
-    }
-  });
-
-
-
-  (state.vehicles || []).forEach(v => {
-    if ((v.name && v.name.toLowerCase().includes(q)) || (v.regNumber && v.regNumber.toLowerCase().includes(q))) {
-      results.push({ category: "Vehicles", title: `${v.name} (${v.regNumber})`, date: `Service: ${v.nextServiceDate || 'N/A'}`, status: v.vehicleType || "Vehicle", view: "Assets" });
-    }
-  });
-
-  (state.warranties || []).forEach(w => {
-    if ((w.productName && w.productName.toLowerCase().includes(q)) || (w.brand && w.brand.toLowerCase().includes(q))) {
-      results.push({ category: "Warranties", title: `${w.brand ? w.brand + ' ' : ''}${w.productName}`, date: `Expires: ${w.expiryDate}`, status: "Warranty", view: "Assets" });
     }
   });
 
@@ -8844,6 +9455,11 @@ async function logoutUser() {
       console.warn("Firebase signOut warning:", e);
     }
   }
+  if (window.Firebase && typeof window.Firebase.unsubscribeFromCloudData === "function") {
+    try {
+      window.Firebase.unsubscribeFromCloudData();
+    } catch (e) {}
+  }
   currentUser = null;
   usersDB = {};
   state = blankState();
@@ -8862,23 +9478,23 @@ async function logoutUser() {
 
 function attachGlobalHeaderEvents() {
   const gSearch = document.getElementById("globalSearchInput");
-  if (gSearch && !gSearch.dataset.bound) {
-    gSearch.dataset.bound = "true";
+  if (gSearch && (!gSearch.dataset || !gSearch.dataset.bound)) {
+    if (gSearch.dataset) gSearch.dataset.bound = "true";
     gSearch.addEventListener("input", e => handleGlobalSearch(e.target.value));
   }
   const notifBtn = document.getElementById("notifBellBtn");
-  if (notifBtn && !notifBtn.dataset.bound) {
-    notifBtn.dataset.bound = "true";
+  if (notifBtn && (!notifBtn.dataset || !notifBtn.dataset.bound)) {
+    if (notifBtn.dataset) notifBtn.dataset.bound = "true";
     notifBtn.addEventListener("click", toggleNotifDrawer);
   }
   const logoutBtn = document.getElementById("logoutBtn");
-  if (logoutBtn && !logoutBtn.dataset.bound) {
-    logoutBtn.dataset.bound = "true";
+  if (logoutBtn && (!logoutBtn.dataset || !logoutBtn.dataset.bound)) {
+    if (logoutBtn.dataset) logoutBtn.dataset.bound = "true";
     logoutBtn.addEventListener("click", logoutUser);
   }
   const modalLogoutBtn = document.getElementById("modalLogoutBtn");
-  if (modalLogoutBtn && !modalLogoutBtn.dataset.bound) {
-    modalLogoutBtn.dataset.bound = "true";
+  if (modalLogoutBtn && (!modalLogoutBtn.dataset || !modalLogoutBtn.dataset.bound)) {
+    if (modalLogoutBtn.dataset) modalLogoutBtn.dataset.bound = "true";
     modalLogoutBtn.addEventListener("click", logoutUser);
   }
 }
@@ -8902,4 +9518,18 @@ function attachGlobalHeaderEvents() {
   setInterval(updateLiveDate, 1000);
   updateLiveDate();
 })();
+
+// Window exports for Timetable System
+window.changeTimetableDate = changeTimetableDate;
+window.shiftTimetableDate = shiftTimetableDate;
+window.resetTimetableToToday = resetTimetableToToday;
+window.toggleTimetableTaskDone = toggleTimetableTaskDone;
+window.deleteTimetableTask = deleteTimetableTask;
+window.copyUnfinishedTasksFromYesterday = copyUnfinishedTasksFromYesterday;
+window.openAddTimetableTaskModal = openAddTimetableTaskModal;
+window.openEditTimetableTaskModal = openEditTimetableTaskModal;
+window.closeTimetableTaskModal = closeTimetableTaskModal;
+window.submitTimetableTask = submitTimetableTask;
+window.viewProductivityTimetable = viewProductivityTimetable;
+
 

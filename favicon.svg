@@ -1,12 +1,29 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
   <defs>
-    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#4f46e5" />
-      <stop offset="100%" stop-color="#7c3aed" />
+    <linearGradient id="barGrad" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#059669" />
+      <stop offset="100%" stop-color="#34d399" />
     </linearGradient>
   </defs>
-  <rect width="64" height="64" rx="14" fill="url(#grad)" />
-  <path d="M32 14L14 23l18 9 18-9-18-9z" fill="#ffffff" fill-opacity="0.95" />
-  <path d="M14 31l18 9 18-9" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.9" />
-  <path d="M14 39l18 9 18-9" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.8" />
+  <!-- Dark Badge Background -->
+  <rect width="64" height="64" rx="15" fill="#0b1e2d" />
+  
+  <!-- Base Ground Line -->
+  <rect x="13" y="49" width="38" height="3" rx="1.5" fill="#044d3d" />
+  
+  <!-- 3 Rising Green Gradient Bars -->
+  <rect x="14" y="35" width="9.5" height="12" rx="4.75" fill="url(#barGrad)" />
+  <rect x="27.25" y="24" width="9.5" height="23" rx="4.75" fill="url(#barGrad)" />
+  <rect x="40.5" y="17" width="9.5" height="30" rx="4.75" fill="url(#barGrad)" />
+  
+  <!-- Dotted Arc Trajectory -->
+  <circle cx="21" cy="27" r="1.3" fill="#ffffff" />
+  <circle cx="25.5" cy="22" r="1.3" fill="#ffffff" />
+  <circle cx="30.5" cy="17.5" r="1.3" fill="#ffffff" />
+  <circle cx="36" cy="13.5" r="1.3" fill="#ffffff" />
+  <circle cx="41.5" cy="10.5" r="1.3" fill="#ffffff" />
+  
+  <!-- Target Ring at Top -->
+  <circle cx="45.25" cy="8.5" r="4.5" stroke="#ffffff" stroke-width="2.2" fill="none" />
+  <circle cx="45.25" cy="8.5" r="1.8" fill="#10b981" />
 </svg>
