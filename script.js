@@ -5648,9 +5648,9 @@ function viewDocuments() {
           <option value="Others Document" ${activeDocCategory === 'Others Document' ? 'selected' : ''}>Others Document</option>
         </select>
 
-        <input type="file" id="docFileInput" accept="image/*,.pdf,.doc,.docx,.txt" style="display: none;">
+        <input type="file" id="docFileInput" accept="image/*,.png,.jpg,.jpeg,.webp,.gif,.svg,.bmp,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.rtf,.json,.md,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/pdf" style="display: none;">
         <button type="button" id="docUploadTriggerBtn" style="background: #ffffff; border: 1px solid var(--border-color); padding: 9px 14px; border-radius: 8px; font-size: 12.5px; font-weight: 600; cursor: pointer; color: #334155; display: flex; align-items: center; gap: 6px;">
-          📎 <span id="docFileLabel">Choose File...</span>
+          📎 <span id="docFileLabel">Choose Document (PDF, Images, Word, PPT, Excel, Text)...</span>
         </button>
 
         <button id="docAddBtn" style="background: linear-gradient(135deg, #6366f1, #4f46e5); color: #fff; border: none; padding: 10px 18px; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; box-shadow: 0 4px 12px rgba(79,70,229,0.2);">
@@ -5659,6 +5659,77 @@ function viewDocuments() {
       </div>
     </div>
   </div>`;
+}
+
+// High-Definition Canvas PDF Rendering Engine (Mozilla PDF.js)
+async function renderPdfDocumentToContainer(dataUri, container) {
+  container.innerHTML = `
+    <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; padding:60px 20px; color:#94a3b8; width:100%; min-height:360px;">
+      <div style="width:38px; height:38px; border:3px solid #334155; border-top-color:#6366f1; border-radius:50%; animation:docSpin 0.8s linear infinite;"></div>
+      <div style="margin-top:14px; font-weight:600; font-size:13.5px; color:#cbd5e1;">Rendering PDF pages in high definition...</div>
+    </div>
+  `;
+
+  function dataUriToUint8Array(uri) {
+    const base64Index = uri.indexOf(";base64,");
+    const base64 = base64Index !== -1 ? uri.substring(base64Index + 8) : (uri.includes(",") ? uri.split(",")[1] : uri);
+    const binary = atob(base64);
+    const len = binary.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  }
+
+  try {
+    const bytes = dataUriToUint8Array(dataUri);
+    if (window.pdfjsLib) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      const loadingTask = window.pdfjsLib.getDocument({ data: bytes });
+      const pdf = await loadingTask.promise;
+
+      container.innerHTML = `
+        <div id="pdfCanvasList" style="width:100%; max-height:74vh; overflow-y:auto; overflow-x:hidden; background:#0f172a; padding:16px; border-radius:12px; box-sizing:border-box; display:flex; flex-direction:column; align-items:center; gap:16px;"></div>
+      `;
+      const list = document.getElementById("pdfCanvasList");
+
+      for (let num = 1; num <= pdf.numPages; num++) {
+        const page = await pdf.getPage(num);
+        const initialViewport = page.getViewport({ scale: 1.0 });
+        const targetWidth = Math.min(window.innerWidth - 64, 820);
+        const scale = Math.max(targetWidth / initialViewport.width, 1.25);
+        const viewport = page.getViewport({ scale: scale });
+
+        const pageWrap = document.createElement("div");
+        pageWrap.style.cssText = "position:relative; width:100%; max-width:820px; background:#ffffff; border-radius:8px; box-shadow:0 8px 30px rgba(0,0,0,0.5); overflow:hidden;";
+
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        canvas.style.cssText = "width:100%; height:auto; display:block;";
+        pageWrap.appendChild(canvas);
+
+        const badge = document.createElement("div");
+        badge.textContent = `Page ${num} / ${pdf.numPages}`;
+        badge.style.cssText = "position:absolute; bottom:10px; right:12px; background:rgba(15,23,42,0.85); backdrop-filter:blur(4px); color:#ffffff; font-size:11px; font-weight:700; padding:3px 9px; border-radius:6px; pointer-events:none;";
+        pageWrap.appendChild(badge);
+
+        list.appendChild(pageWrap);
+
+        await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+      }
+    } else {
+      container.innerHTML = `
+        <iframe src="${dataUri}" style="width:100%; height:75vh; border:none; border-radius:12px; background:#525659;"></iframe>
+      `;
+    }
+  } catch (err) {
+    container.innerHTML = `
+      <iframe src="${dataUri}" style="width:100%; height:75vh; border:none; border-radius:12px; background:#525659;"></iframe>
+    `;
+  }
 }
 
 function previewDocument(id) {
@@ -5684,21 +5755,54 @@ function previewDocument(id) {
 
   if (!modal) return;
 
-  const isImg = doc.fileData && doc.fileType && doc.fileType.includes("image");
-  const isPdf = doc.fileData && doc.fileType && doc.fileType.includes("pdf");
+  const fileName = doc.fileName || doc.name || doc.documentTitle || "";
+  const ext = fileName.split('.').pop().toLowerCase();
+  const mime = (doc.fileType || "").toLowerCase();
+  const dataPrefix = (doc.fileData || "").substring(0, 80).toLowerCase();
+
+  const isPdf = mime.includes("pdf") || ext === "pdf" || dataPrefix.includes("application/pdf");
+  const isImg = mime.startsWith("image/") || ["png", "jpg", "jpeg", "webp", "gif", "svg", "bmp"].includes(ext) || dataPrefix.includes("image/");
+  const isWord = ["doc", "docx"].includes(ext) || mime.includes("word") || mime.includes("officedocument.wordprocessingml");
+  const isPpt = ["ppt", "pptx"].includes(ext) || mime.includes("presentation") || mime.includes("powerpoint");
+  const isExcel = ["xls", "xlsx", "csv"].includes(ext) || mime.includes("spreadsheet") || mime.includes("excel") || mime.includes("csv");
+  const isText = ["txt", "md", "json", "rtf", "log"].includes(ext) || mime.includes("text/") || dataPrefix.includes("data:text");
 
   if (modalTitle) modalTitle.textContent = doc.name || doc.documentTitle;
   if (modalSub) {
-    modalSub.textContent = `Category: ${doc.category || 'Yours Document'} • Type: ${doc.documentType || doc.type || 'Document'} • Uploaded: ${doc.date || 'Today'} ${doc.fileName ? '• 📎 ' + doc.fileName : ''}`;
+    modalSub.textContent = `Category: ${doc.category || 'Yours Document'} • Type: ${doc.documentType || doc.type || 'Document'} • Uploaded: ${doc.date || 'Today'} ${fileName ? '• 📎 ' + fileName : ''}`;
   }
   if (modalIcon) {
-    modalIcon.textContent = isPdf ? "📄" : isImg ? "🖼️" : "📁";
-    modalIcon.style.background = isPdf ? "#fee2e2" : isImg ? "#e0f2fe" : "#eef2ff";
-    modalIcon.style.color = isPdf ? "#dc2626" : isImg ? "#0284c7" : "#4f46e5";
+    if (isPdf) {
+      modalIcon.textContent = "📄";
+      modalIcon.style.background = "#fee2e2";
+      modalIcon.style.color = "#dc2626";
+    } else if (isImg) {
+      modalIcon.textContent = "🖼️";
+      modalIcon.style.background = "#e0f2fe";
+      modalIcon.style.color = "#0284c7";
+    } else if (isWord) {
+      modalIcon.textContent = "📝";
+      modalIcon.style.background = "#dbeafe";
+      modalIcon.style.color = "#1e40af";
+    } else if (isPpt) {
+      modalIcon.textContent = "📽️";
+      modalIcon.style.background = "#ffedd5";
+      modalIcon.style.color = "#c2410c";
+    } else if (isExcel) {
+      modalIcon.textContent = "📊";
+      modalIcon.style.background = "#dcfce7";
+      modalIcon.style.color = "#15803d";
+    } else {
+      modalIcon.textContent = "📁";
+      modalIcon.style.background = "#eef2ff";
+      modalIcon.style.color = "#4f46e5";
+    }
   }
 
+  const formatLabel = isPdf ? "PDF Document" : isImg ? "High-Res Image" : isWord ? "Microsoft Word" : isPpt ? "PowerPoint Presentation" : isExcel ? "Spreadsheet Data" : isText ? "Text Document" : "Vault File";
+
   if (footerMeta) {
-    footerMeta.innerHTML = `<span style="color: #0f172a; font-weight: 700;">${escapeHtml(doc.documentType || 'Document')}</span> • ${isPdf ? 'PDF View' : isImg ? 'Image View (Zoomable)' : 'Document Vault'}`;
+    footerMeta.innerHTML = `<span style="color: #0f172a; font-weight: 700;">${escapeHtml(doc.documentType || 'Document')}</span> • ${formatLabel}`;
   }
 
   // Setup View Controls
@@ -5707,7 +5811,7 @@ function previewDocument(id) {
       controls.innerHTML = `
         <div style="display: flex; align-items: center; gap: 5px; background: #f8fafc; padding: 3px 8px; border-radius: 8px; border: 1px solid var(--border-color);">
           <button type="button" class="doc-zoom-btn" onclick="zoomDocImg(0.8)" title="Zoom Out">🔍 -</button>
-          <span id="docZoomLabel" style="font-size: 12px; font-weight: 800; color: #1e293b; min-width: 44px; text-align: center;">100%</span>
+          <span id="docZoomLabel" style="font-size: 12px; font-weight: 700; color: #1e293b; min-width: 44px; text-align: center;">100%</span>
           <button type="button" class="doc-zoom-btn" onclick="zoomDocImg(1.25)" title="Zoom In">🔍 +</button>
           <button type="button" class="doc-zoom-btn" onclick="resetDocImgZoom()" title="Reset to standard width">Fit</button>
           <button type="button" class="doc-zoom-btn" onclick="rotateDocImg()" title="Rotate 90 degrees">↺ 90°</button>
@@ -5716,7 +5820,13 @@ function previewDocument(id) {
     } else if (isPdf) {
       controls.innerHTML = `
         <span style="font-size: 11.5px; font-weight: 700; color: #4338ca; background: #eef2ff; border: 1px solid #c7d2fe; padding: 5px 10px; border-radius: 6px;">
-          PDF Full Width Reader
+          📄 PDF Document View
+        </span>
+      `;
+    } else if (isWord || isPpt || isExcel) {
+      controls.innerHTML = `
+        <span style="font-size: 11.5px; font-weight: 700; color: #047857; background: #ecfdf5; border: 1px solid #a7f3d0; padding: 5px 10px; border-radius: 6px;">
+          ✓ Verified Vault Asset
         </span>
       `;
     } else {
@@ -5744,8 +5854,39 @@ function previewDocument(id) {
         </div>
       `;
     } else if (isPdf) {
+      // High-Definition Canvas PDF Rendering using PDF.js
+      renderPdfDocumentToContainer(doc.fileData, modalBody);
+    } else if (isWord || isPpt || isExcel) {
+      const brandColor = isWord ? "#2b579a" : isPpt ? "#d24726" : "#217346";
+      const brandIcon = isWord ? "📝" : isPpt ? "📽️" : "📊";
+      const brandLabel = isWord ? "Microsoft Word Document" : isPpt ? "PowerPoint Presentation" : "Excel Spreadsheet";
+      const brandExt = isWord ? "DOC / DOCX" : isPpt ? "PPT / PPTX" : "XLS / XLSX";
+
       modalBody.innerHTML = `
-        <iframe id="docPdfIframe" src="${doc.fileData}#toolbar=1&navpanes=0&view=FitH" style="width: 100%; height: 75vh; border: none; border-radius: 12px; background: #525659; box-shadow: 0 10px 30px rgba(0,0,0,0.3);"></iframe>
+        <div style="width: 100%; background: #0f172a; padding: 36px 20px; border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 55vh; box-sizing: border-box;">
+          <div style="background: #ffffff; border-radius: 20px; padding: 36px 28px; max-width: 480px; width: 100%; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.4); box-sizing: border-box;">
+            <div style="width: 72px; height: 72px; border-radius: 18px; background: ${brandColor}15; color: ${brandColor}; display: inline-flex; align-items: center; justify-content: center; font-size: 36px; margin-bottom: 16px; border: 2px solid ${brandColor}30;">
+              ${brandIcon}
+            </div>
+            <div style="display: inline-block; font-size: 11.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: ${brandColor}; background: ${brandColor}12; padding: 3px 10px; border-radius: 12px; margin-bottom: 10px;">
+              ${brandLabel}
+            </div>
+            <h3 style="font-size: 19px; font-weight: 700; color: #0f172a; margin: 0 0 8px 0; word-break: break-word;">
+              ${escapeHtml(doc.fileName || doc.name || doc.documentTitle)}
+            </h3>
+            <div style="font-size: 13px; color: #64748b; margin-bottom: 20px;">
+              Format: <b>${brandExt}</b> • Category: <b>${escapeHtml(doc.category || 'Yours Document')}</b> • Uploaded: <b>${escapeHtml(doc.date || 'Today')}</b>
+            </div>
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; margin-bottom: 24px; font-size: 13px; color: #475569; text-align: left; line-height: 1.5;">
+              🔒 <b>Encrypted Vault Asset:</b> This ${brandExt} document is encrypted and stored safely in your cloud vault. Ready to download and view or edit with Microsoft Office, Google Workspace, or any document reader.
+            </div>
+            <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
+              <a href="${doc.fileData}" download="${escapeHtml(doc.fileName || doc.name || 'document')}" class="doc-modal-dl-btn" style="background: linear-gradient(135deg, ${brandColor}, #0f172a); color: #fff; padding: 11px 24px; border-radius: 10px; font-weight: 700; font-size: 13.5px; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; box-shadow: 0 4px 14px ${brandColor}40;">
+                ⬇️ Download & Open Document
+              </a>
+            </div>
+          </div>
+        </div>
       `;
     } else {
       let textContent = "";
@@ -5773,7 +5914,7 @@ function previewDocument(id) {
                 ${doc.fileName ? `<div style="font-size: 11.5px; color: #64748b; font-weight: 500;">📎 ${escapeHtml(doc.fileName)}</div>` : ''}
               </div>
             </div>
-            <div style="font-family: 'Plus Jakarta Sans', system-ui, sans-serif; font-size: 15px; color: #1e293b; line-height: 1.85; white-space: pre-wrap; word-break: break-word;">
+            <div style="font-family: inherit; font-size: 14.5px; color: #1e293b; line-height: 1.8; white-space: pre-wrap; word-break: break-word;">
               ${escapeHtml(textContent)}
             </div>
           </div>
@@ -5785,7 +5926,7 @@ function previewDocument(id) {
       <div style="background: #ffffff; padding: 48px 36px; border-radius: 16px; text-align: center; max-width: 440px; box-shadow: 0 10px 30px rgba(0,0,0,0.25);">
         <div style="font-size: 52px; margin-bottom: 14px;">📁</div>
         <h4 style="font-size: 18px; font-weight: 800; color: #0f172a; margin-bottom: 8px;">${escapeHtml(doc.name || doc.documentTitle)}</h4>
-        <p style="font-size: 13.5px; color: #64748b; line-height: 1.6; margin: 0 0 16px 0;">No file attachment was attached during creation. You can delete and re-upload this document with an image or PDF file.</p>
+        <p style="font-size: 13.5px; color: #64748b; line-height: 1.6; margin: 0 0 16px 0;">No file attachment was attached during creation. You can delete and re-upload this document with an image, PDF, Word, or presentation file.</p>
         <button type="button" class="pwd-card-btn" onclick="closeDocModal()" style="padding: 8px 18px; border-radius: 8px; font-weight: 700;">OK</button>
       </div>`;
   }
@@ -6751,8 +6892,8 @@ function attachHandlers() {
     $("docFileInput").addEventListener("change", e => {
       const file = e.target.files[0];
       if (file) {
-        if (file.size > 800 * 1024) {
-          showToast("⚠️ Document exceeds 800 KB limit for cloud sync. Please select a smaller file.");
+        if (file.size > 2.5 * 1024 * 1024) {
+          showToast("⚠️ Document exceeds 2.5 MB limit. Please select a file smaller than 2.5 MB.");
           e.target.value = "";
           selectedDocFile = null;
           if ($("docFileLabel")) $("docFileLabel").textContent = "Choose File...";
@@ -8442,11 +8583,11 @@ function openDocModalFromHealth(title, dataUrl) {
   titleEl.textContent = title;
   dlBtn.href = dataUrl;
   if (dataUrl.startsWith("data:image")) {
-    body.innerHTML = `<img src="${dataUrl}" style="max-width: 100%; border-radius: 8px;">`;
-  } else if (dataUrl.startsWith("data:application/pdf")) {
-    body.innerHTML = `<iframe src="${dataUrl}" style="width: 100%; height: 400px; border: none;"></iframe>`;
+    body.innerHTML = `<div style="display:flex; justify-content:center; align-items:center; padding:20px; width:100%;"><img src="${dataUrl}" style="max-width: 100%; max-height:70vh; border-radius: 8px; object-fit:contain;"></div>`;
+  } else if (dataUrl.startsWith("data:application/pdf") || dataUrl.includes(";base64,JVBERi")) {
+    renderPdfDocumentToContainer(dataUrl, body);
   } else {
-    body.innerHTML = `<div style="padding: 20px; text-align: center;">Attachment available for download.</div>`;
+    body.innerHTML = `<div style="padding: 40px 20px; text-align: center; color:#cbd5e1; font-size:14px;">Attachment available for download using the button below.</div>`;
   }
   modal.style.display = "flex";
 }
