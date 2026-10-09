@@ -2287,7 +2287,7 @@ function renderNav() {
 
 const CHART_COLORS = ['#7c3aed', '#a78bfa', '#3b82f6', '#06b6d4', '#f59e0b', '#ef4444', '#ec4899', '#64748b'];
 
-// Donut Chart Generator
+// Donut Chart Generator (Smooth SVG Vector Donut with Percentages)
 function buildDonutChart(cats) {
   const entries = Object.entries(cats || {}).sort((a, b) => b[1] - a[1]);
   const total = entries.reduce((s, [, v]) => s + v, 0);
@@ -2301,68 +2301,80 @@ function buildDonutChart(cats) {
       </div>`;
   }
 
-  let cumulativePct = 0;
-  const gradientStops = entries.map(([c, v], i) => {
-    const pct = (v / total) * 100;
-    const start = cumulativePct;
-    cumulativePct += pct;
-    const color = CHART_COLORS[i % CHART_COLORS.length];
-    return `${color} ${start.toFixed(2)}% ${cumulativePct.toFixed(2)}%`;
-  }).join(", ");
+  const PALETTE = ['#8b5cf6', '#3b82f6', '#ec4899', '#10b981', '#f59e0b', '#06b6d4', '#ef4444', '#64748b'];
 
-  let legendItems = [];
-  if (entries.length <= 6) {
-    legendItems = entries.map(([c, v], i) => ({
-      color: CHART_COLORS[i % CHART_COLORS.length],
-      label: c,
-      amount: v
-    }));
-  } else {
-    const top5 = entries.slice(0, 5);
-    const rest = entries.slice(5);
-    const restTotal = rest.reduce((s, [, v]) => s + v, 0);
-    legendItems = top5.map(([c, v], i) => ({
-      color: CHART_COLORS[i % CHART_COLORS.length],
-      label: c,
-      amount: v
-    }));
-    legendItems.push({
-      color: CHART_COLORS[5 % CHART_COLORS.length],
-      label: `${rest.length} more categories`,
-      amount: restTotal
-    });
-  }
+  const radius = 64;
+  const circumference = 2 * Math.PI * radius; // ~402.12
+  let currentOffset = 0;
 
-  const legendHtml = legendItems.map(item => {
-    const amtStr = item.amount >= 1000 ? `₹${(item.amount / 1000).toFixed(1)}k` : fmt(item.amount);
+  const isSingle = entries.length === 1;
+  const svgSlices = entries.map(([category, amt], idx) => {
+    const pct = amt / total;
+    const strokeDash = pct * circumference;
+    const strokeOffset = -currentOffset;
+    currentOffset += strokeDash;
+    const color = PALETTE[idx % PALETTE.length];
+
     return `
-      <div class="legend-row">
-        <span class="legend-swatch" style="background:${item.color}"></span>
-        <span class="legend-label">${item.label}</span>
-        <span class="legend-amt num">${amtStr}</span>
+      <circle cx="100" cy="100" r="${radius}"
+        class="donut-slice"
+        data-index="${idx}"
+        fill="transparent"
+        stroke="${color}"
+        stroke-width="22"
+        stroke-dasharray="${isSingle ? circumference : strokeDash} ${circumference}"
+        stroke-dashoffset="${strokeOffset}"
+        stroke-linecap="${isSingle ? 'butt' : 'round'}"
+        transform="rotate(-90 100 100)"
+      />`;
+  }).join("");
+
+  const legendHtml = entries.map(([category, amt], idx) => {
+    const pct = Math.round((amt / total) * 100);
+    const color = PALETTE[idx % PALETTE.length];
+    return `
+      <div class="legend-row" style="display:flex; align-items:center; gap:8px; padding:4px 0;">
+        <span class="legend-swatch" style="background:${color}; width:10px; height:10px; border-radius:3px; flex-shrink:0;"></span>
+        <span class="legend-label" style="font-weight:500; color:#334155; font-size:13.5px; flex:1;">${category}</span>
+        <span style="font-size:12px; font-weight:500; color:#64748b; background:#f1f5f9; padding:2px 7px; border-radius:6px;">${pct}%</span>
+        <span class="legend-amt num" style="font-weight:600; color:#0f172a; font-size:13.5px;">${fmt(amt)}</span>
       </div>`;
   }).join("");
 
-  const totalStr = total >= 1000 ? `₹${(total / 1000).toFixed(1)}k` : fmt(total);
+  const totalStr = fmt(total);
 
   return `
-    <div class="donut-container">
+    <div class="donut-container" style="display:flex; align-items:center; gap:28px; flex-wrap:wrap; padding:8px 0;">
       <div class="donut-graphic-wrapper">
-        <div class="donut-graphic" style="background: conic-gradient(${gradientStops});">
-          <div class="donut-hole">
-            <div class="lbl">Total</div>
-            <div class="val num">${totalStr}</div>
-          </div>
+        <svg viewBox="0 0 200 200" width="180" height="180" style="overflow:visible;">
+          <defs>
+            <filter id="donutShadow" x="-10%" y="-10%" width="120%" height="120%">
+              <feDropShadow dx="0" dy="2" stdDeviation="4" flood-opacity="0.08"/>
+            </filter>
+          </defs>
+          <!-- Background Track -->
+          <circle cx="100" cy="100" r="${radius}" fill="transparent" stroke="#f1f5f9" stroke-width="22" />
+          <!-- Slices -->
+          <g filter="url(#donutShadow)">
+            ${svgSlices}
+          </g>
+        </svg>
+        <div class="donut-hole">
+          <div class="lbl" style="font-size:10px; font-weight:500; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-muted, #64748b);">TOTAL</div>
+          <div class="val num" style="font-size:16.5px; font-weight:600; color:#0f172a; margin-top:2px;">${totalStr}</div>
         </div>
       </div>
-      <div class="donut-legend">${legendHtml}</div>
+      <div class="donut-legend" style="flex:1; min-width:180px; display:flex; flex-direction:column; gap:6px;">
+        ${legendHtml}
+      </div>
     </div>`;
 }
 
-// Income vs Expenses Dual Bar Chart (Dynamic from User Data)
+// Income vs Expenses Dual Bar Chart (Dynamic from User Data with Strict Mathematically Nice Steps)
 function buildDualBarChart(monthKey) {
-  const inc = totalIncomeForMonth ? totalIncomeForMonth(monthKey) : totalIncome();
-  const exp = totalExpenseForMonth ? totalExpenseForMonth(monthKey) : totalExpense();
+  const currentKey = monthKey || getCurrentFinanceMonthKey();
+  const inc = totalIncomeForMonth ? totalIncomeForMonth(currentKey) : totalIncome();
+  const exp = totalExpenseForMonth ? totalExpenseForMonth(currentKey) : totalExpense();
 
   if (inc === 0 && exp === 0 && (!state.expenses || state.expenses.length === 0)) {
     return `
@@ -2373,49 +2385,114 @@ function buildDualBarChart(monthKey) {
       </div>`;
   }
 
-  const maxVal = Math.max(inc, exp, 1000) * 1.25;
-  const chartH = 180, chartW = 520, padL = 50, padB = 30, padT = 15, padR = 20;
+  // Calculate clean, mathematically rounded nice ticks (No duplicate 2k, no 813)
+  const highestVal = Math.max(inc, exp, 100);
+  function computeNiceScale(val) {
+    if (val <= 0) val = 1000;
+    const rough = val / 3;
+    const p = Math.pow(10, Math.floor(Math.log10(rough)));
+    const frac = rough / p;
+    let factor = 1;
+    if (frac > 1.2 && frac <= 2.5) factor = 2;
+    else if (frac > 2.5 && frac <= 7) factor = 5;
+    else if (frac > 7) factor = 10;
+    const step = factor * p;
+    const max = Math.ceil(val / step) * step;
+    const ticks = [];
+    for (let t = max; t >= 0; t -= step) {
+      ticks.push(t);
+    }
+    return { max: Math.max(max, step), ticks };
+  }
+
+  const { max: maxVal, ticks: yTicks } = computeNiceScale(highestVal * 1.18);
+  const chartH = 200, chartW = 540, padL = 60, padB = 40, padT = 32, padR = 25;
   const plotH = chartH - padB - padT;
 
-  const yTicks = [maxVal, maxVal * 0.75, maxVal * 0.5, maxVal * 0.25, 0];
   const gridLines = yTicks.map(val => {
     const y = padT + plotH * (1 - val / maxVal);
-    const labelText = val === 0 ? "₹0" : (val >= 1000 ? `₹${(val / 1000).toFixed(0)}k` : fmt(val));
+    const labelText = val === 0 ? "₹0" : (val >= 1000 ? (val % 1000 === 0 ? `₹${val/1000}k` : `₹${(val/1000).toFixed(1)}k`) : `₹${Math.round(val)}`);
     return `
       <g class="grid-line-group">
-        <line x1="${padL}" y1="${y}" x2="${chartW - padR}" y2="${y}" stroke="#f1f5f9" stroke-width="1" stroke-dasharray="3,3" />
-        <text x="${padL - 8}" y="${y + 4}" font-size="10" font-weight="600" fill="#94a3b8" text-anchor="end">${labelText}</text>
+        <line x1="${padL}" y1="${y}" x2="${chartW - padR}" y2="${y}" stroke="#f1f5f9" stroke-width="1.2" stroke-dasharray="3,3" />
+        <text x="${padL - 10}" y="${y + 3.5}" font-size="10.5" font-weight="600" fill="#94a3b8" text-anchor="end" font-family="var(--font-smooth-number)">${labelText}</text>
       </g>`;
   }).join("");
 
-  const incH = (inc / maxVal) * plotH;
-  const expH = (exp / maxVal) * plotH;
+  // Position and heights of the bars
+  const barW = 46;
+  const centerX = (padL + (chartW - padR)) / 2;
+  const xInc = centerX - barW - 14;
+  const xExp = centerX + 14;
+
+  const incH = inc > 0 ? Math.max((inc / maxVal) * plotH, 6) : 4;
+  const expH = exp > 0 ? Math.max((exp / maxVal) * plotH, 6) : 4;
   const yInc = padT + plotH - incH;
   const yExp = padT + plotH - expH;
 
-  return `
-    <div class="svg-bar-chart-wrap">
-      <svg viewBox="0 0 ${chartW} ${chartH}" preserveAspectRatio="none">
-        ${gridLines}
-        <g class="bar-group">
-          <rect x="180" y="${yInc}" width="30" height="${incH}" rx="4" fill="#00a86b" />
-          <text x="195" y="${chartH - 8}" font-size="11" font-weight="600" fill="#64748b" text-anchor="middle">Income (${fmt(inc)})</text>
+  const incOpacity = inc > 0 ? 1 : 0.45;
+  const expOpacity = exp > 0 ? 1 : 0.45;
 
-          <rect x="310" y="${yExp}" width="30" height="${expH}" rx="4" fill="#dc2626" />
-          <text x="325" y="${chartH - 8}" font-size="11" font-weight="600" fill="#64748b" text-anchor="middle">Expenses (${fmt(exp)})</text>
+  const netDiff = inc - exp;
+  const netBadge = netDiff >= 0 
+    ? `<span style="display:inline-flex; align-items:center; gap:4px; color:#059669; font-weight:700; font-size:12px; background:#ecfdf5; border:1px solid #a7f3d0; padding:3px 10px; border-radius:12px; font-family:var(--font-smooth-number);"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="18 15 12 9 6 15"/></svg> Net Surplus: +${fmt(netDiff)}</span>`
+    : `<span style="display:inline-flex; align-items:center; gap:4px; color:#dc2626; font-weight:700; font-size:12px; background:#fef2f2; border:1px solid #fecaca; padding:3px 10px; border-radius:12px; font-family:var(--font-smooth-number);"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg> Net Deficit: -${fmt(Math.abs(netDiff))}</span>`;
+
+  return `
+    <div style="margin-bottom: 8px; display:flex; justify-content:flex-end;">
+      ${netBadge}
+    </div>
+    <div class="svg-bar-chart-wrap" style="position:relative;">
+      <svg viewBox="0 0 ${chartW} ${chartH}" preserveAspectRatio="none" style="width:100%; height:100%;">
+        <defs>
+          <linearGradient id="incBarGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#10b981"/>
+            <stop offset="100%" stop-color="#059669"/>
+          </linearGradient>
+          <linearGradient id="expBarGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#f43f5e"/>
+            <stop offset="100%" stop-color="#e11d48"/>
+          </linearGradient>
+          <filter id="barShadow" x="-10%" y="-10%" width="120%" height="130%">
+            <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.12"/>
+          </filter>
+        </defs>
+        ${gridLines}
+
+        <!-- Zero Baseline -->
+        <line x1="${padL}" y1="${padT + plotH}" x2="${chartW - padR}" y2="${padT + plotH}" stroke="#cbd5e1" stroke-width="1.5" />
+
+        <!-- Income Bar -->
+        <g class="bar-group" style="cursor:default;">
+          <rect x="${xInc}" y="${yInc}" width="${barW}" height="${incH}" rx="${inc > 0 ? 8 : 2}" fill="url(#incBarGrad)" opacity="${incOpacity}" filter="url(#barShadow)" />
+          <!-- Floating Value Badge on Top -->
+          <text x="${xInc + barW / 2}" y="${yInc - 7}" font-size="12" font-weight="700" fill="${inc > 0 ? '#059669' : '#94a3b8'}" text-anchor="middle" font-family="var(--font-smooth-number)">${fmt(inc)}</text>
+          <!-- Bottom Category Label -->
+          <text x="${xInc + barW / 2}" y="${chartH - 10}" font-size="12" font-weight="700" fill="#475569" text-anchor="middle">Income</text>
+        </g>
+
+        <!-- Expenses Bar -->
+        <g class="bar-group" style="cursor:default;">
+          <rect x="${xExp}" y="${yExp}" width="${barW}" height="${expH}" rx="${exp > 0 ? 8 : 2}" fill="url(#expBarGrad)" opacity="${expOpacity}" filter="url(#barShadow)" />
+          <!-- Floating Value Badge on Top -->
+          <text x="${xExp + barW / 2}" y="${yExp - 7}" font-size="12" font-weight="700" fill="${exp > 0 ? '#e11d48' : '#94a3b8'}" text-anchor="middle" font-family="var(--font-smooth-number)">${fmt(exp)}</text>
+          <!-- Bottom Category Label -->
+          <text x="${xExp + barW / 2}" y="${chartH - 10}" font-size="12" font-weight="700" fill="#475569" text-anchor="middle">Expenses</text>
         </g>
       </svg>
     </div>`;
 }
 
-// Daily Balance Trend Line Chart (Dynamic from User's Data)
+// Daily Balance Trend Line Chart (Smooth Monotone Spline with Correct Calendar Dates and Positive/Negative Ranges)
 function buildBalanceTrendChart(monthKey) {
-  let incList = getFinanceIncomeForMonth ? getFinanceIncomeForMonth(monthKey) : (state.income || []);
-  let expList = getFinanceExpensesForMonth ? getFinanceExpensesForMonth(monthKey) : (state.expenses || []);
+  const currentKey = monthKey || getCurrentFinanceMonthKey();
+  let incList = getFinanceIncomeForMonth ? getFinanceIncomeForMonth(currentKey) : (state.income || []);
+  let expList = getFinanceExpensesForMonth ? getFinanceExpensesForMonth(currentKey) : (state.expenses || []);
 
-  const inc = incList.reduce((s, i) => s + (i.amount || 0), 0);
+  const totalInc = incList.reduce((s, i) => s + (i.amount || 0), 0);
+  const totalExp = expList.reduce((s, e) => s + (e.amount || 0), 0);
 
-  if (inc === 0 && expList.length === 0) {
+  if (totalInc === 0 && expList.length === 0) {
     return `
       <div style="padding: 40px 20px; text-align: center; color: var(--text-muted);">
         <div style="font-size: 36px; margin-bottom: 8px;">📈</div>
@@ -2424,56 +2501,220 @@ function buildBalanceTrendChart(monthKey) {
       </div>`;
   }
 
-  let points = [inc];
-  let running = inc;
-  expList.slice().reverse().forEach(e => {
-    running -= (e.amount || 0);
-    points.push(running);
-  });
-  if (points.length < 2) points.push(points[0]);
+  // Parse month and days
+  const [yearStr, monthStr] = currentKey.split("-");
+  const year = parseInt(yearStr, 10);
+  const monthNum = parseInt(monthStr, 10);
+  const daysInMonth = new Date(year, monthNum, 0).getDate();
+  const monthAbbr = new Date(year, monthNum - 1, 1).toLocaleString("en-US", { month: "short" });
 
-  const maxV = Math.max(...points, 1000) * 1.1;
-  const minV = Math.min(...points, 0);
-  const chartW = 600, chartH = 220, padL = 50, padB = 30, padT = 15, padR = 20;
+  // Starting carried balance from previous month
+  const savingsData = typeof getMonthlySavingsData === "function" ? getMonthlySavingsData(currentKey) : { lastMonthBalance: 0 };
+  const initialBalance = savingsData.lastMonthBalance || 0;
+
+  // Map daily transactions
+  const dailyNet = {};
+  for (let d = 1; d <= daysInMonth; d++) {
+    dailyNet[d] = 0;
+  }
+
+  incList.forEach(item => {
+    if (item.date) {
+      const parts = item.date.split("-");
+      if (parts.length >= 3) {
+        const d = parseInt(parts[2], 10);
+        if (d >= 1 && d <= daysInMonth) dailyNet[d] += (item.amount || 0);
+      }
+    }
+  });
+
+  expList.forEach(item => {
+    if (item.date) {
+      const parts = item.date.split("-");
+      if (parts.length >= 3) {
+        const d = parseInt(parts[2], 10);
+        if (d >= 1 && d <= daysInMonth) dailyNet[d] -= (item.amount || 0);
+      }
+    }
+  });
+
+  // Find max active day in this month
+  const today = new Date();
+  const isCurrentMonth = today.getFullYear() === year && (today.getMonth() + 1) === monthNum;
+  const currentDay = isCurrentMonth ? today.getDate() : daysInMonth;
+
+  let maxActiveDay = 1;
+  for (let d = 1; d <= daysInMonth; d++) {
+    if (dailyNet[d] !== 0) maxActiveDay = Math.max(maxActiveDay, d);
+  }
+  const timelineEndDay = isCurrentMonth ? Math.min(daysInMonth, Math.max(currentDay, maxActiveDay, 7)) : daysInMonth;
+
+  // Build daily points
+  const points = [];
+  let running = initialBalance;
+  for (let d = 1; d <= timelineEndDay; d++) {
+    running += dailyNet[d];
+    points.push({ day: d, balance: running, delta: dailyNet[d] });
+  }
+
+  if (points.length < 2) {
+    points.push({ day: 2, balance: running, delta: 0 });
+  }
+
+  const balances = points.map(p => p.balance);
+  let minB = Math.min(...balances);
+  let maxB = Math.max(...balances);
+
+  // If minB === maxB, expand margins
+  if (minB === maxB) {
+    if (minB >= 0) { maxB += 1000; minB = 0; }
+    else { minB -= 1000; maxB = 0; }
+  }
+
+  // Always include 0 in the scale
+  if (minB > 0) minB = 0;
+  if (maxB < 0) maxB = 0;
+
+  // Calculate clean, nice step scale
+  const span = Math.max(maxB - minB, 500);
+  const roughStep = span / 4;
+  const power = Math.pow(10, Math.floor(Math.log10(roughStep)));
+  const frac = roughStep / power;
+  let factor = 1;
+  if (frac > 1.2 && frac <= 2.5) factor = 2;
+  else if (frac > 2.5 && frac <= 7) factor = 5;
+  else if (frac > 7) factor = 10;
+  const step = factor * power;
+
+  const niceMin = Math.floor(minB / step) * step;
+  const niceMax = Math.ceil(maxB / step) * step;
+  const totalSpan = niceMax - niceMin || 1;
+
+  const yTicks = [];
+  for (let v = niceMax; v >= niceMin; v -= step) {
+    yTicks.push(v);
+  }
+
+  const chartW = 580, chartH = 220, padL = 60, padB = 34, padT = 20, padR = 25;
   const plotH = chartH - padB - padT;
   const plotW = chartW - padL - padR;
 
-  const yTicks = [maxV, maxV * 0.75, maxV * 0.5, maxV * 0.25, 0];
+  const getY = v => padT + plotH * (1 - (v - niceMin) / totalSpan);
+  const getX = (d, totalDays) => padL + ((d - 1) / Math.max(totalDays - 1, 1)) * plotW;
+
+  const yZero = getY(0);
+
+  // Y-axis grid lines and labels
   const gridLines = yTicks.map(val => {
-    const y = padT + plotH * (1 - (val - minV) / ((maxV - minV) || 1));
-    const labelText = val === 0 ? "₹0" : (val >= 1000 ? `₹${(val / 1000).toFixed(0)}k` : fmt(val));
+    const y = getY(val);
+    const isZero = Math.abs(val) < 0.001;
+    const labelText = isZero 
+      ? "₹0" 
+      : (val > 0 
+          ? (val >= 1000 ? (val % 1000 === 0 ? `+₹${val/1000}k` : `+₹${(val/1000).toFixed(1)}k`) : `+₹${val}`)
+          : (Math.abs(val) >= 1000 ? (val % 1000 === 0 ? `-₹${Math.abs(val)/1000}k` : `-₹${(Math.abs(val)/1000).toFixed(1)}k`) : `-₹${Math.abs(val)}`));
+    
+    const strokeColor = isZero ? "#cbd5e1" : "#f1f5f9";
+    const strokeWidth = isZero ? 1.5 : 1;
+    const textColor = isZero ? "#64748b" : (val < 0 ? "#dc2626" : "#64748b");
+    const strokeDash = isZero ? "none" : "3,3";
+
     return `
       <g class="grid-line-group">
-        <line x1="${padL}" y1="${y}" x2="${chartW - padR}" y2="${y}" stroke="#f1f5f9" stroke-width="1" stroke-dasharray="3,3" />
-        <text x="${padL - 8}" y="${y + 4}" font-size="10" font-weight="600" fill="#94a3b8" text-anchor="end">${labelText}</text>
+        <line x1="${padL}" y1="${y}" x2="${chartW - padR}" y2="${y}" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-dasharray="${strokeDash}" />
+        <text x="${padL - 10}" y="${y + 3.5}" font-size="10.5" font-weight="${isZero ? 700 : 600}" fill="${textColor}" text-anchor="end" font-family="var(--font-smooth-number)">${labelText}</text>
       </g>`;
   }).join("");
 
-  const getX = i => padL + (i / (points.length - 1)) * plotW;
-  const getY = v => padT + plotH * (1 - (v - minV) / ((maxV - minV) || 1));
+  // Smooth Bezier Curve computation (Monotone/Catmull-Rom spline)
+  const coords = points.map(p => ({ x: getX(p.day, timelineEndDay), y: getY(p.balance), val: p.balance, day: p.day }));
+  
+  let pathD = `M ${coords[0].x.toFixed(1)} ${coords[0].y.toFixed(1)}`;
+  for (let i = 0; i < coords.length - 1; i++) {
+    const p0 = coords[Math.max(i - 1, 0)];
+    const p1 = coords[i];
+    const p2 = coords[i + 1];
+    const p3 = coords[Math.min(i + 2, coords.length - 1)];
 
-  let pathD = `M ${getX(0)} ${getY(points[0])}`;
-  for (let i = 1; i < points.length; i++) {
-    const x0 = getX(i - 1), y0 = getY(points[i - 1]);
-    const x1 = getX(i), y1 = getY(points[i]);
-    const mx = (x0 + x1) / 2;
-    pathD += ` C ${mx} ${y0}, ${mx} ${y1}, ${x1} ${y1}`;
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+
+    pathD += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
   }
 
-  const areaD = `${pathD} L ${getX(points.length - 1)} ${chartH - padB} L ${padL} ${chartH - padB} Z`;
+  // Area path: fills cleanly down to yZero or chart bottom
+  const lastCoord = coords[coords.length - 1];
+  const firstCoord = coords[0];
+  const baselineY = Math.min(Math.max(yZero, padT), padT + plotH);
+  const areaD = `${pathD} L ${lastCoord.x.toFixed(1)} ${baselineY.toFixed(1)} L ${firstCoord.x.toFixed(1)} ${baselineY.toFixed(1)} Z`;
+
+  // X-axis date milestones
+  const xMilestones = [];
+  const stepDays = timelineEndDay <= 10 ? 2 : (timelineEndDay <= 20 ? 4 : 7);
+  for (let d = 1; d <= timelineEndDay; d += stepDays) {
+    xMilestones.push(d);
+  }
+  if (!xMilestones.includes(timelineEndDay)) xMilestones.push(timelineEndDay);
+
+  const xDateLabels = xMilestones.map(d => {
+    const x = getX(d, timelineEndDay);
+    return `
+      <g>
+        <line x1="${x}" y1="${padT + plotH}" x2="${x}" y2="${padT + plotH + 4}" stroke="#cbd5e1" stroke-width="1.2" />
+        <text x="${x}" y="${chartH - 8}" font-size="10" font-weight="600" fill="#64748b" text-anchor="middle" font-family="var(--font-smooth-number)">${monthAbbr} ${d}</text>
+      </g>`;
+  }).join("");
+
+  // Last point & active day dots
+  const lastPoint = coords[coords.length - 1];
+  const isNetNegative = lastPoint.val < 0;
+  const strokeColor = isNetNegative ? "#8b5cf6" : "#4f46e5";
+  const gradStart = isNetNegative ? "#8b5cf6" : "#4f46e5";
+
+  // Data dots for days with transactions
+  const activeDots = coords.filter(c => {
+    const pt = points.find(p => p.day === c.day);
+    return pt && (pt.delta !== 0 || c.day === coords[0].day || c.day === lastPoint.day);
+  }).map(c => {
+    return `
+      <g class="trend-dot-group">
+        <circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="5" fill="#ffffff" stroke="${strokeColor}" stroke-width="2.5" />
+        <circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="2.5" fill="${strokeColor}" />
+      </g>`;
+  }).join("");
+
+  const latestBalFormatted = (lastPoint.val >= 0 ? "+" : "") + fmt(lastPoint.val);
+  const statusColor = lastPoint.val >= 0 ? "#059669" : "#dc2626";
+  const statusBg = lastPoint.val >= 0 ? "#ecfdf5" : "#fef2f2";
+  const statusBorder = lastPoint.val >= 0 ? "#a7f3d0" : "#fecaca";
 
   return `
-    <div class="svg-line-chart-wrap" style="height: 240px;">
-      <svg viewBox="0 0 ${chartW} ${chartH}" preserveAspectRatio="none">
+    <div style="margin-bottom: 8px; display:flex; justify-content:space-between; align-items:center;">
+      <span style="font-size:12px; color:var(--text-muted); font-weight:500;">
+        Carried: <b style="color:#0f172a; font-family:var(--font-smooth-number);">${fmt(initialBalance)}</b>
+      </span>
+      <span style="display:inline-flex; align-items:center; gap:4px; font-weight:700; font-size:12.5px; color:${statusColor}; background:${statusBg}; border:1px solid ${statusBorder}; padding:2px 10px; border-radius:12px; font-family:var(--font-smooth-number);">
+        Current Balance: ${latestBalFormatted}
+      </span>
+    </div>
+    <div class="svg-line-chart-wrap" style="height: 220px; position:relative;">
+      <svg viewBox="0 0 ${chartW} ${chartH}" preserveAspectRatio="none" style="width:100%; height:100%;">
         <defs>
-          <linearGradient id="balanceGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="#6366f1" stop-opacity="0.25"/>
-            <stop offset="100%" stop-color="#6366f1" stop-opacity="0.0"/>
+          <linearGradient id="balanceGradDynamic" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${gradStart}" stop-opacity="0.32"/>
+            <stop offset="100%" stop-color="${gradStart}" stop-opacity="0.02"/>
           </linearGradient>
+          <filter id="lineGlow" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="${strokeColor}" flood-opacity="0.25"/>
+          </filter>
         </defs>
         ${gridLines}
-        <path d="${areaD}" fill="url(#balanceGrad)" />
-        <path d="${pathD}" fill="none" stroke="#6366f1" stroke-width="2.5" stroke-linecap="round" />
+        ${xDateLabels}
+        <path d="${areaD}" fill="url(#balanceGradDynamic)" />
+        <path d="${pathD}" fill="none" stroke="${strokeColor}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" filter="url(#lineGlow)" />
+        ${activeDots}
       </svg>
     </div>`;
 }
@@ -2913,8 +3154,8 @@ function viewDashboard() {
           <div class="sub">${t('Cashflow Comparison')} (${getMonthYearLabel(currentMonth)})</div>
         </div>
         <div class="chart-legend">
-          <span><span class="legend-dot" style="background:#00a86b"></span>${t('Income')}</span>
-          <span><span class="legend-dot" style="background:#dc2626"></span>${t('Expenses')}</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#10b981"></span>${t('Income')}</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#f43f5e"></span>${t('Expenses')}</span>
         </div>
       </div>
       ${buildDualBarChart(currentMonth)}
@@ -3552,41 +3793,57 @@ function deleteTimetableTask(taskId) {
   showToast("Task removed from timetable");
 }
 
-function copyUnfinishedTasksFromYesterday() {
+function copyTimetableFromYesterday() {
   const [y, m, d] = (selectedTimetableDate || getActualTodayKey()).split("-").map(Number);
   const dt = new Date(y, m - 1, d);
   dt.setDate(dt.getDate() - 1);
   const yestKey = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
 
-  const yestUnfinished = (state.timetableTasks || []).filter(t => t.date === yestKey && !t.done);
-  if (yestUnfinished.length === 0) {
-    showToast("No pending tasks from yesterday to copy!");
+  const yestTasks = (state.timetableTasks || []).filter(t => t.date === yestKey);
+  if (yestTasks.length === 0) {
+    showToast("No timetable schedule found from yesterday to copy");
     return;
   }
 
+  // Sort yesterday's tasks chronologically
+  const sortedYest = [...yestTasks].sort((a, b) => (a.startTime || "").localeCompare(b.startTime || ""));
+
   let copiedCount = 0;
-  yestUnfinished.forEach(t => {
-    const exists = (state.timetableTasks || []).some(cur => cur.date === selectedTimetableDate && cur.title === t.title && cur.startTime === t.startTime);
+  sortedYest.forEach(t => {
+    // Only copy if a slot with identical start and end times does not already exist on today's schedule
+    const exists = (state.timetableTasks || []).some(cur =>
+      cur.date === selectedTimetableDate &&
+      cur.startTime === t.startTime &&
+      cur.endTime === t.endTime
+    );
     if (!exists) {
       state.timetableTasks.push({
-        id: Date.now() + Math.floor(Math.random() * 10000),
-        title: t.title,
+        id: Date.now() + Math.floor(Math.random() * 100000) + copiedCount,
+        title: "", // Blank task name as requested
         date: selectedTimetableDate,
         startTime: t.startTime || "09:00",
         endTime: t.endTime || "10:00",
         priority: t.priority || "medium",
-        notes: t.notes || "",
+        notes: "", // Blank notes as requested
         done: false,
-        copiedFrom: yestKey
+        copiedFrom: yestKey,
+        createdAt: new Date().toISOString()
       });
       copiedCount++;
     }
   });
 
+  if (copiedCount === 0) {
+    showToast("Yesterday's schedule is already set for this date");
+    return;
+  }
+
   saveSessionData();
   renderMain();
-  showToast(`Copied ${copiedCount} pending tasks to today!`);
+  showToast(`Copied ${copiedCount} time slots from yesterday! Click Edit to enter tasks.`);
 }
+
+const copyUnfinishedTasksFromYesterday = copyTimetableFromYesterday;
 
 /* Add/Edit Task Modal Helpers */
 function openAddTimetableTaskModal(defaultDate) {
@@ -3792,18 +4049,18 @@ function viewProductivityTimetable() {
       </div>
 
       <div class="timetable-date-controls">
-        <button type="button" class="tt-nav-btn" onclick="shiftTimetableDate(-1)" title="Previous day">◀ Prev Day</button>
-        <button type="button" class="tt-nav-btn ${isToday ? 'primary' : ''}" onclick="resetTimetableToToday()" title="Jump to today">📅 Today</button>
-        <button type="button" class="tt-nav-btn" onclick="shiftTimetableDate(1)" title="Next day">Next Day ▶</button>
+        <button type="button" class="tt-nav-btn" onclick="shiftTimetableDate(-1)" title="Previous day">Prev Day</button>
+        <button type="button" class="tt-nav-btn ${isToday ? 'primary' : ''}" onclick="resetTimetableToToday()" title="Jump to today">Today</button>
+        <button type="button" class="tt-nav-btn" onclick="shiftTimetableDate(1)" title="Next day">Next Day</button>
         <input type="date" class="tt-date-picker-input" value="${selectedTimetableDate}" onchange="changeTimetableDate(this.value)" aria-label="Select date">
       </div>
 
       <div class="timetable-actions">
-        <button type="button" class="tt-action-btn secondary" onclick="copyUnfinishedTasksFromYesterday()" title="Copy uncompleted tasks from yesterday">
-          📋 Copy From Yesterday
+        <button type="button" class="tt-action-btn secondary" onclick="copyTimetableFromYesterday()" title="Copy yesterday's schedule without task names">
+          Copy From Yesterday
         </button>
         <button type="button" class="tt-action-btn accent" onclick="openAddTimetableTaskModal()" title="Add new task with specific time">
-          + Add Task
+          Add Task
         </button>
       </div>
     </div>
@@ -3828,11 +4085,10 @@ function viewProductivityTimetable() {
   <!-- Timetable Schedule List (down with time) -->
   ${dayTasks.length === 0 ? `
     <div class="tt-empty-schedule-card">
-      <div class="tt-empty-schedule-icon">📅</div>
       <div class="tt-empty-schedule-title">No tasks scheduled for ${isToday ? 'today' : dateFormatted}</div>
-      <div class="tt-empty-schedule-sub">Click <b>+ Add Task</b> to schedule your tasks with specific start and end times in your timetable.</div>
+      <div class="tt-empty-schedule-sub">Click <b>Add Task</b> to schedule your tasks with specific start and end times in your timetable.</div>
       <button type="button" class="tt-action-btn accent" onclick="openAddTimetableTaskModal()" style="padding: 10px 22px; font-size: 14px;">
-        + Add Task to Timetable
+        Add Task to Timetable
       </button>
     </div>
   ` : `
@@ -3848,17 +4104,21 @@ function viewProductivityTimetable() {
           const isLive = isTaskLiveNow(t);
           const timeText = t.startTime ? (t.endTime && t.endTime !== t.startTime ? `${formatTime12h(t.startTime)} – ${formatTime12h(t.endTime)}` : formatTime12h(t.startTime)) : 'Anytime';
           const duration = (t.startTime && t.endTime) ? getPeriodDurationText(t.startTime, t.endTime) : '';
+          const hasTitle = Boolean(t.title && t.title.trim());
+          const titleDisplay = hasTitle
+            ? escapeHtml(t.title)
+            : `<span class="tt-empty-title-placeholder" onclick="openEditTimetableTaskModal(${t.id})" title="Click Edit to enter task name">Tap Edit to enter task</span>`;
           return `
           <div class="timetable-schedule-row ${t.done ? 'is-done' : ''} ${isLive ? 'is-live' : ''}">
             <div class="tt-time-col">
-              <div class="tt-time-slot">🕒 ${timeText}</div>
+              <div class="tt-time-slot">${timeText}</div>
               <div class="tt-time-meta">
                 ${duration ? `<span class="tt-duration-badge">${duration}</span>` : ''}
-                ${isLive ? `<span class="tt-live-pill">🟢 LIVE NOW</span>` : ''}
+                ${isLive ? `<span class="tt-live-pill">LIVE NOW</span>` : ''}
               </div>
             </div>
             <div class="tt-task-col">
-              <div class="tt-task-heading">${escapeHtml(t.title)}</div>
+              <div class="tt-task-heading ${!hasTitle ? 'is-empty' : ''}">${titleDisplay}</div>
               ${t.notes ? `<div class="tt-task-desc">${escapeHtml(t.notes)}</div>` : ''}
             </div>
             <div class="tt-priority-col">
@@ -3869,7 +4129,7 @@ function viewProductivityTimetable() {
                 <span class="tt-tick-check">${t.done ? '✓' : ''}</span>
               </button>
               <button type="button" class="tt-btn-edit" onclick="openEditTimetableTaskModal(${t.id})" title="Edit task details & time">
-                ✎ Edit
+                Edit
               </button>
               <button type="button" class="tt-btn-del" onclick="deleteTimetableTask(${t.id})" title="Delete task">
                 ✕
@@ -7134,7 +7394,7 @@ function viewBalanceSettings() {
       </div>
       <div style="text-align: right;">
         <div style="font-size: 11px; font-weight: 700; color: #1e40af; text-transform: uppercase; letter-spacing: 0.5px;">${t('Dashboard Savings')}</div>
-        <div style="font-size: 24px; font-weight: 800; color: #1d4ed8; font-family: 'IBM Plex Mono', monospace;">
+        <div style="font-size: 24px; font-weight: 800; color: #1d4ed8; font-family: var(--font-smooth-number); font-variant-numeric: tabular-nums; letter-spacing: -0.02em;">
           ${fmt(savingsData.totalSavings)}
         </div>
         ${savingsData.allTimeSavingsExp > 0 ? `
@@ -7149,27 +7409,27 @@ function viewBalanceSettings() {
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-top: 14px;">
       <div style="background: #ffffff; border: 1px solid #dbeafe; border-radius: 10px; padding: 12px 14px;">
         <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">${t('Carried From Prev Month')}</div>
-        <div style="font-size: 18px; font-weight: 800; color: #059669; font-family: 'IBM Plex Mono', monospace; margin-top: 2px;">+${fmt(savingsData.lastMonthBalance)}</div>
+        <div style="font-size: 18px; font-weight: 800; color: #059669; font-family: var(--font-smooth-number); font-variant-numeric: tabular-nums; letter-spacing: -0.015em; margin-top: 2px;">+${fmt(savingsData.lastMonthBalance)}</div>
         <div style="font-size: 11px; color: ${savingsData.allTimeSavingsExp > 0 ? '#4f46e5' : 'var(--text-muted)'}; font-weight: 600; margin-top: 3px;">${savingsData.allTimeSavingsExp > 0 ? `${fmt(savingsData.totalSavings)} savings balance` : 'From previous month'}</div>
       </div>
       <div style="background: #ffffff; border: 1px solid #dbeafe; border-radius: 10px; padding: 12px 14px;">
         <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">${t('Current Logged Income')}</div>
-        <div style="font-size: 18px; font-weight: 800; color: #0f172a; font-family: 'IBM Plex Mono', monospace; margin-top: 2px;">${fmt(currentInc)}</div>
+        <div style="font-size: 18px; font-weight: 800; color: #0f172a; font-family: var(--font-smooth-number); font-variant-numeric: tabular-nums; letter-spacing: -0.015em; margin-top: 2px;">${fmt(currentInc)}</div>
         <div style="font-size: 11px; color: var(--text-muted); font-weight: 500; margin-top: 3px;">Monthly earnings</div>
       </div>
       <div style="background: #ffffff; border: 1px solid #dbeafe; border-radius: 10px; padding: 12px 14px;">
         <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Current Logged Expenses</div>
-        <div style="font-size: 18px; font-weight: 800; color: #dc2626; font-family: 'IBM Plex Mono', monospace; margin-top: 2px;">${fmt(incomeExp)}</div>
+        <div style="font-size: 18px; font-weight: 800; color: #dc2626; font-family: var(--font-smooth-number); font-variant-numeric: tabular-nums; letter-spacing: -0.015em; margin-top: 2px;">${fmt(incomeExp)}</div>
         <div style="font-size: 11px; color: #dc2626; font-weight: 500; margin-top: 3px;">Deducted from income</div>
       </div>
       <div style="background: #ffffff; border: 1px solid ${savingsData.allTimeSavingsExp > 0 ? '#c7d2fe' : '#dbeafe'}; border-radius: 10px; padding: 12px 14px;">
         <div style="font-size: 11px; font-weight: 700; color: ${savingsData.allTimeSavingsExp > 0 ? '#4338ca' : 'var(--text-muted)'}; text-transform: uppercase;">Spent From Savings</div>
-        <div style="font-size: 18px; font-weight: 800; color: ${savingsData.allTimeSavingsExp > 0 ? '#4f46e5' : '#64748b'}; font-family: 'IBM Plex Mono', monospace; margin-top: 2px;">${fmt(savingsData.allTimeSavingsExp)}</div>
+        <div style="font-size: 18px; font-weight: 800; color: ${savingsData.allTimeSavingsExp > 0 ? '#4f46e5' : '#64748b'}; font-family: var(--font-smooth-number); font-variant-numeric: tabular-nums; letter-spacing: -0.015em; margin-top: 2px;">${fmt(savingsData.allTimeSavingsExp)}</div>
         <div style="font-size: 11px; color: ${savingsData.allTimeSavingsExp > 0 ? '#6366f1' : 'var(--text-muted)'}; font-weight: 500; margin-top: 3px;">${fmt(savingsData.totalSavings)} balance remaining</div>
       </div>
       <div style="background: #ffffff; border: 1px solid #dbeafe; border-radius: 10px; padding: 12px 14px;">
         <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">${t('Current Month Net Flow')}</div>
-        <div style="font-size: 18px; font-weight: 800; color: ${currentNet >= 0 ? '#059669' : '#dc2626'}; font-family: 'IBM Plex Mono', monospace; margin-top: 2px;">${currentNet >= 0 ? '+' : ''}${fmt(currentNet)}</div>
+        <div style="font-size: 18px; font-weight: 800; color: ${currentNet >= 0 ? '#059669' : '#dc2626'}; font-family: var(--font-smooth-number); font-variant-numeric: tabular-nums; letter-spacing: -0.015em; margin-top: 2px;">${currentNet >= 0 ? '+' : ''}${fmt(currentNet)}</div>
         <div style="font-size: 11px; color: var(--text-muted); font-weight: 500; margin-top: 3px;">Income - Income Expenses</div>
       </div>
     </div>
@@ -7232,7 +7492,7 @@ function viewBalanceSettings() {
             <div style="display: flex; align-items: center; gap: 12px;" id="historyActions_${m}">
               <div style="text-align: right;">
                 <div style="font-size: 10.5px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">${t('Closing Balance')}</div>
-                <div style="font-weight: 800; font-size: 18px; color: ${currentBal >= 0 ? '#059669' : '#dc2626'}; font-family: 'IBM Plex Mono', monospace;">
+                <div style="font-weight: 800; font-size: 18px; color: ${currentBal >= 0 ? '#059669' : '#dc2626'}; font-family: var(--font-smooth-number); font-variant-numeric: tabular-nums; letter-spacing: -0.015em;">
                   ${fmt(currentBal)}
                 </div>
               </div>
@@ -7262,7 +7522,7 @@ function startEditCompletedBalance(monthKey) {
     <div style="display: flex; align-items: center; gap: 6px;">
       <span style="font-size: 14px; font-weight: 700; color: #475569;">₹</span>
       <input type="number" id="inputHist_${monthKey}" value="${currentBal}" step="any"
-        style="width: 110px; padding: 6px 10px; border-radius: 8px; border: 1.5px solid #6366f1; font-weight: 700; font-size: 13px; font-family: 'IBM Plex Mono', monospace; outline: none; background: #fff;">
+        style="width: 110px; padding: 6px 10px; border-radius: 8px; border: 1.5px solid #6366f1; font-weight: 700; font-size: 13px; font-family: var(--font-smooth-number); font-variant-numeric: tabular-nums; outline: none; background: #fff;">
       <button type="button" onclick="submitEditCompletedBalance('${monthKey}')"
         style="background: #10b981; color: #ffffff; border: none; padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer;">
         Save
@@ -8203,7 +8463,7 @@ function renderFitnessAndHabitsSection() {
         <span class="pill-tag info">Goal: 2.5 L</span>
       </div>
       <div style="text-align: center; padding: 20px 0;">
-        <div style="font-size: 32px; font-weight: 800; font-family: 'IBM Plex Mono', monospace; color: #2563eb;">
+        <div style="font-size: 32px; font-weight: 800; font-family: var(--font-smooth-number); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; color: #2563eb;">
           ${(waterToday / 1000).toFixed(1)} L / 2.5 L
         </div>
         <div style="font-size: 12.5px; color: var(--text-muted); margin-top: 4px;">

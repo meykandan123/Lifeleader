@@ -4,14 +4,94 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LifeLedger AI — Intelligent Life Dashboard</title>
-  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <title>LifeLedger AI — Intelligent Personal Finance, Budgeting & Life Dashboard</title>
+
+  <!-- Primary SEO Meta Tags -->
+  <meta name="description" content="LifeLedger AI is an intelligent all-in-one life operating system featuring automated expense tracking, smart cashflow analytics, encrypted password vault, daily habits, and multi-device cloud synchronization.">
+  <meta name="keywords" content="lifeledger, personal finance dashboard, expense tracker, budget planner, cashflow analytics, life operating system, money manager, cloud sync, habit tracker, secure password vault, firestore sync, financial ledger">
+  <meta name="author" content="LifeLedger AI">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <link rel="canonical" href="https://lifeledger.ai/">
+
+  <!-- Mobile & PWA Theme -->
+  <meta name="application-name" content="LifeLedger AI">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="LifeLedger AI">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="theme-color" content="#4f46e5" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b1e2d" media="(prefers-color-scheme: dark)">
+
+  <!-- Open Graph / Facebook / LinkedIn / WhatsApp -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="LifeLedger AI">
+  <meta property="og:url" content="https://lifeledger.ai/">
+  <meta property="og:title" content="LifeLedger AI — Intelligent Personal Finance & Life Operating System">
+  <meta property="og:description" content="Automate expense tracking, monitor real-time balance curves, budget smartly, and organize your life with high-precision cloud synchronization.">
+  <meta property="og:image" content="logo-icon.png">
+  <meta property="og:image:width" content="512">
+  <meta property="og:image:height" content="512">
+  <meta property="og:image:alt" content="LifeLedger AI — Intelligent Dashboard">
+  <meta property="og:locale" content="en_US">
+
+  <!-- Twitter / X -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="LifeLedger AI — Intelligent Personal Finance & Life Dashboard">
+  <meta name="twitter:description" content="Intelligent expense tracking, live balance trends, encrypted password vault, and daily life dashboard.">
+  <meta name="twitter:image" content="logo-icon.png">
+
+  <!-- Structured Data: JSON-LD for Google Rich Results -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebApplication",
+        "@id": "https://lifeledger.ai/#webapp",
+        "name": "LifeLedger AI",
+        "url": "https://lifeledger.ai/",
+        "applicationCategory": "FinanceApplication, ProductivityApplication",
+        "operatingSystem": "All modern browsers (Windows, macOS, iOS, Android, Linux)",
+        "browserRequirements": "Requires JavaScript. Requires HTML5.",
+        "description": "Intelligent all-in-one life operating system featuring automated expense tracking, smart cashflow analytics, encrypted password vault, and multi-device cloud synchronization.",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "INR"
+        },
+        "featureList": [
+          "Automated Income & Expense Tracking",
+          "Interactive Cashflow & Dual-Bar Comparison",
+          "Real-Time Daily Balance Trend Spline",
+          "Multi-Category Budget Limit Monitoring",
+          "Zero-Knowledge Encrypted Password Manager",
+          "Multi-Device Realtime Cloud Firestore Sync",
+          "Daily Water and Habit Routine Trackers"
+        ]
+      },
+      {
+        "@type": "Organization",
+        "@id": "https://lifeledger.ai/#organization",
+        "name": "LifeLedger AI",
+        "url": "https://lifeledger.ai/",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://lifeledger.ai/logo-icon.png"
+        }
+      }
+    ]
+  }
+  </script>
+
+  <link rel="icon" type="image/png" href="logo-icon.png">
   <link rel="alternate icon" type="image/x-icon" href="favicon.ico">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
+
+  <!-- Google Fonts: Inter (Normal Text) & Poppins (Headings) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link
-    href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap"
-    rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@500;600;700;800&display=swap" rel="stylesheet">
+
   <link rel="stylesheet" href="styles.css">
 
   <!-- Global Error & Browser Extension Noise Interceptor -->
@@ -28,9 +108,62 @@
                s.includes('blocked_by_client') ||
                s.includes('net::err_failed') ||
                s.includes('err_failed') ||
+               s.includes('err_network_changed') ||
+               s.includes('err_name_not_resolved') ||
+               s.includes('err_connection_timed_out') ||
+               s.includes('connection_timed_out') ||
+               s.includes('err_connection_reset') ||
+               s.includes('connection_reset') ||
+               s.includes('err_timed_out') ||
+               s.includes('timed_out') ||
+               s.includes('quic') ||
+               s.includes('network_idle_timeout') ||
+               s.includes('fonts.googleapis.com') ||
+               s.includes('googletagmanager') ||
+               s.includes('analytics') ||
+               s.includes('securetoken') ||
+               s.includes('identitytoolkit') ||
+               s.includes('token.ts') ||
+               s.includes('index.ts') ||
                s.includes('webchannel_connection') ||
                s.includes('firestore.googleapis.com');
       }
+
+      // Resilient fetch wrapper with automatic retry on transient socket drops/resets
+      if (typeof window.fetch === 'function') {
+        var origFetch = window.fetch;
+        window.fetch = async function(resource, init) {
+          var url = typeof resource === 'string' ? resource : (resource && resource.url ? resource.url : '');
+          var isAuthEndpoint = url.includes('securetoken.googleapis.com') || url.includes('identitytoolkit.googleapis.com');
+          if (!isAuthEndpoint) {
+            return origFetch.apply(this, arguments);
+          }
+          var maxRetries = 2;
+          for (var attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+              return await origFetch.apply(this, arguments);
+            } catch (err) {
+              if (attempt >= maxRetries) throw err;
+              await new Promise(function(resolve) { setTimeout(resolve, 400 * (attempt + 1)); });
+            }
+          }
+        };
+      }
+
+      // Safely filter console network noise
+      var origError = console.error;
+      console.error = function() {
+        var msg = Array.prototype.slice.call(arguments).map(function(a) { return String(a || ''); }).join(' ');
+        if (isMutedNoise(msg)) return;
+        origError.apply(console, arguments);
+      };
+
+      var origWarn = console.warn;
+      console.warn = function() {
+        var msg = Array.prototype.slice.call(arguments).map(function(a) { return String(a || ''); }).join(' ');
+        if (isMutedNoise(msg)) return;
+        origWarn.apply(console, arguments);
+      };
 
       window.addEventListener('error', function(event) {
         if (!event) return;
@@ -65,7 +198,8 @@
   <!-- Firebase JS SDK & NoSQL Cloud Firestore Integration -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getAnalytics, logEvent, isSupported } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-analytics.js";
+    const analytics = null;
+    const logEvent = () => {};
     import {
       getAuth,
       createUserWithEmailAndPassword,
@@ -102,21 +236,11 @@
       projectId: "lifeleader-c60e8",
       storageBucket: "lifeleader-c60e8.firebasestorage.app",
       messagingSenderId: "571323680641",
-      appId: "1:571323680641:web:b8673107e928fcd89bca80",
-      measurementId: "G-Q4SVLQFLKQ"
+      appId: "1:571323680641:web:b8673107e928fcd89bca80"
     };
 
     // Initialize Firebase App & NoSQL Cloud Firestore
     const app = initializeApp(firebaseConfig);
-    let analytics = null;
-    if (typeof window !== "undefined" && typeof navigator !== "undefined" && navigator.onLine) {
-      isSupported().then(supported => {
-        if (supported && navigator.onLine) {
-          try { analytics = getAnalytics(app); } catch (e) {}
-        }
-      }).catch(() => {});
-    }
-
     const auth = getAuth(app);
     let db = null;
     let firestoreBlocked = window.__firestoreBlocked || false;
@@ -132,7 +256,8 @@
 
     try {
       db = initializeFirestore(app, {
-        experimentalAutoDetectLongPolling: true
+        experimentalForceLongPolling: true,
+        useFetchStreams: false
       });
     } catch (e) {
       try {
@@ -266,10 +391,25 @@
       signInWithEmail: async (email, password) => {
         const normEmail = String(email || '').trim().toLowerCase();
         try {
-          const userCredential = await signInWithEmailAndPassword(auth, normEmail, password);
+          let userCredential;
+          try {
+            userCredential = await signInWithEmailAndPassword(auth, normEmail, password);
+          } catch (initialErr) {
+            const errStr = String(initialErr && (initialErr.message || initialErr.code || initialErr) || '').toLowerCase();
+            if (initialErr.code === "auth/network-request-failed" || errStr.includes("network") || errStr.includes("fetch") || errStr.includes("reset") || errStr.includes("timeout")) {
+              await new Promise(r => setTimeout(r, 600));
+              userCredential = await signInWithEmailAndPassword(auth, normEmail, password);
+            } else {
+              throw initialErr;
+            }
+          }
           const user = userCredential.user;
 
-          await user.reload();
+          try {
+            await user.reload();
+          } catch (e) {
+            console.debug("User reload offline/flaky notice:", e);
+          }
 
           if (!user.emailVerified) {
             await signOut(auth);
@@ -282,27 +422,35 @@
           }
 
           const cleanId = getCleanDocId(normEmail);
-          await setDoc(doc(db, "users", cleanId), {
+          setDoc(doc(db, "users", cleanId), {
             uid: user.uid,
             emailVerified: true,
             lastLogin: new Date().toISOString()
-          }, { merge: true });
+          }, { merge: true }).catch(() => {});
 
           return { success: true, user };
         } catch (error) {
-          if (error.code === "auth/invalid-credential" || error.code === "auth/user-not-found" || error.code === "auth/wrong-password" || error.code === "auth/invalid-email" || error.code === "auth/network-request-failed") {
-            console.debug("Firebase SignIn handled validation:", error.code);
-          } else {
-            console.debug("Firebase SignIn Notice:", error.message || error);
-          }
+          const errStr = String(error && (error.message || error.code || error) || '').toLowerCase();
+          const isNetError = error.code === "auth/network-request-failed" ||
+            errStr.includes("network") ||
+            errStr.includes("fetch") ||
+            errStr.includes("reset") ||
+            errStr.includes("timeout") ||
+            (typeof navigator !== "undefined" && !navigator.onLine);
 
-          if (error.code === "auth/network-request-failed" || (typeof navigator !== "undefined" && !navigator.onLine)) {
+          if (isNetError) {
             return {
               success: false,
               message: "Network connection offline or unreachable. Please check your internet connection.",
               code: "auth/network-request-failed",
               errorType: "network_error"
             };
+          }
+
+          if (error.code === "auth/invalid-credential" || error.code === "auth/user-not-found" || error.code === "auth/wrong-password" || error.code === "auth/invalid-email") {
+            console.debug("Firebase SignIn handled validation:", error.code);
+          } else {
+            console.debug("Firebase SignIn Notice:", error.message || error);
           }
 
           let errorType = "other";
@@ -637,7 +785,7 @@
   <div id="authScreen">
     <div class="auth-box">
       <div class="auth-brand">
-        <img src="logo.png" alt="LifeLedger AI" class="auth-brand-logo" width="220" height="63">
+        <img src="logo.png" alt="LifeLedger AI" class="auth-brand-logo" width="130" height="130">
         <div class="tagline" data-i18n="Your intelligent life dashboard">Your intelligent life dashboard</div>
       </div>
       <div class="auth-tabs" id="authTabs">
@@ -726,7 +874,11 @@
       <div class="masthead-inner">
         <div class="masthead-left">
           <a href="#" onclick="activeView='Dashboard';renderNav();renderMain();return false;" class="brand-logo" title="LifeLedger AI — Back to Dashboard">
-            <img src="logo.png" alt="LifeLedger AI" class="masthead-brand-img" width="160" height="46">
+            <img src="logo-icon.png" alt="LifeLedger AI" class="masthead-brand-img" width="38" height="38">
+            <div class="brand-text">
+              <h1>LifeLedger<strong>AI</strong></h1>
+              <div class="brand-tagline">Your Life • Organized • Smarter</div>
+            </div>
           </a>
         </div>
         <div class="masthead-user">

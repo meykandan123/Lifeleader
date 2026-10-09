@@ -31,6 +31,10 @@
   --cyan-main: #06b6d4;
   --purple-main: #8b5cf6;
   
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-heading: 'Poppins', system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-smooth-number: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+
   --shadow-sm: 0 1px 4px rgba(15, 23, 42, 0.04);
   --shadow-card: 0 4px 20px -2px rgba(15, 23, 42, 0.05), 0 2px 6px -1px rgba(0, 0, 0, 0.02);
   --shadow-hover: 0 12px 28px -4px rgba(15, 23, 42, 0.1), 0 4px 12px -2px rgba(0, 0, 0, 0.03);
@@ -47,11 +51,13 @@ html { scroll-behavior: smooth; }
 body {
   background-color: var(--bg-app);
   color: var(--text-main);
-  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: var(--font-body);
   font-size: 14px;
   line-height: 1.5;
+  font-weight: 400;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
   overflow-x: hidden;
   max-width: 100vw;
   width: 100%;
@@ -89,16 +95,31 @@ input:focus, select:focus, textarea:focus {
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18) !important;
 }
 
-.num {
-  font-family: 'IBM Plex Mono', monospace;
-  font-variant-numeric: tabular-nums;
+.num, .smooth-num, .smooth-amt {
+  font-family: inherit;
+  font-variant-numeric: normal;
+  letter-spacing: normal;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-h1, h2, h3, h4 {
+h1, h2, h3, h4, h5, h6, .card-header h2, .card h2, .modal-header h2, .modal-header h3 {
+  font-family: var(--font-heading);
   margin: 0;
-  font-weight: 700;
+  font-weight: 600;
   color: #0f172a;
-  letter-spacing: -0.015em;
+  letter-spacing: -0.01em;
+}
+
+/* ===== Gradient Text for Important Titles Only ===== */
+.gradient-title,
+.important-title,
+.title-gradient {
+  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 55%, #06b6d4 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  display: inline-block;
 }
 
 /* ===== App Layout ===== */
@@ -300,46 +321,50 @@ h1, h2, h3, h4 {
 }
 
 .masthead-brand-img {
-  height: 44px;
-  max-width: 220px;
-  width: auto;
+  height: 38px;
+  width: 38px;
   display: block;
   object-fit: contain;
+  border-radius: 9px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
   transition: transform 0.2s ease;
+  flex-shrink: 0;
 }
 
 .brand-logo:hover .masthead-brand-img {
-  transform: scale(1.02);
+  transform: scale(1.05);
 }
 
-.logo-mark {
-  width: 38px;
-  height: 38px;
-  border-radius: 10px;
-  background: #0b1e2d;
-  color: #ffffff;
+.brand-text {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 4px 12px rgba(11, 30, 45, 0.3);
-}
-
-.logo-mark svg {
-  width: 22px;
-  height: 22px;
+  flex-direction: column;
 }
 
 .brand-text h1 {
-  font-size: 18px;
-  font-weight: 800;
+  font-family: var(--font-heading);
+  font-size: 19px;
+  font-weight: 700;
   color: #0f172a;
+  letter-spacing: -0.2px;
   line-height: 1.1;
+  margin: 0;
 }
 
-.brand-text .tagline {
-  font-size: 12px;
-  color: var(--text-muted);
-  font-weight: 500;
+.brand-text h1 strong {
+  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #06b6d4 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-weight: 800;
+}
+
+.brand-tagline {
+  font-size: 9px;
+  font-weight: 700;
+  color: #64748b;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  margin-top: 1px;
 }
 
 .masthead-user {
@@ -605,7 +630,7 @@ h1, h2, h3, h4 {
 .parse-result.show { display: block; }
 .parse-result .pr-row { display: flex; gap: 16px; flex-wrap: wrap; }
 .parse-result .pr-field { font-size: 13px; color: #065f46; }
-.parse-result .pr-field b { color: #047857; font-family: 'IBM Plex Mono', monospace; }
+.parse-result .pr-field b { color: #047857; font-family: var(--font-smooth-number); font-variant-numeric: tabular-nums; }
 
 /* ===== Navigation Bar ===== */
 nav#mainNav {
@@ -754,11 +779,13 @@ main#mainContent > * {
 }
 
 .stat-block .sb-value {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-smooth-number);
+  font-variant-numeric: tabular-nums lining-nums;
   font-size: 26px;
   font-weight: 700;
   line-height: 1.1;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.025em;
+  -webkit-font-smoothing: antialiased;
 }
 
 .stat-block .sb-sub {
@@ -825,11 +852,14 @@ main#mainContent > * {
 }
 
 .ss-value {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-smooth-number);
+  font-variant-numeric: tabular-nums lining-nums;
   font-size: 24px;
   font-weight: 700;
   color: #0f172a;
   line-height: 1.1;
+  letter-spacing: -0.02em;
+  -webkit-font-smoothing: antialiased;
 }
 
 .ss-sub {
@@ -888,7 +918,7 @@ main#mainContent > * {
   .grid-2, .grid-main-side { grid-template-columns: 1fr; }
 }
 
-/* ===== Donut Chart Component ===== */
+/* ===== Donut Chart Component & Smooth Animations ===== */
 .donut-container {
   display: flex;
   align-items: center;
@@ -897,42 +927,56 @@ main#mainContent > * {
   padding: 10px 0;
 }
 
-.donut-graphic {
-  width: 160px;
-  height: 160px;
-  border-radius: 50%;
+.donut-graphic-wrapper {
   position: relative;
-  flex: none;
-  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.04);
+  width: 180px;
+  height: 180px;
+  flex-shrink: 0;
+  animation: smoothDonutFadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-.donut-graphic .donut-hole {
+@keyframes smoothDonutFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.donut-graphic-wrapper svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.donut-slice {
+  cursor: pointer;
+  transition: stroke-width 0.25s ease, opacity 0.2s ease;
+}
+
+.donut-slice:hover {
+  stroke-width: 25px !important;
+  opacity: 1 !important;
+}
+
+.donut-graphic-wrapper:hover .donut-slice:not(:hover) {
+  opacity: 0.65;
+}
+
+.donut-hole {
   position: absolute;
-  inset: 26px;
-  background: var(--bg-card);
+  inset: 32px;
+  background: var(--bg-card, #ffffff);
   border-radius: 50%;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  text-align: center;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-}
-
-.donut-hole .lbl {
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-}
-
-.donut-hole .val {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 16px;
-  font-weight: 700;
-  color: #0f172a;
-  margin-top: 2px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+  pointer-events: none;
 }
 
 .donut-legend {
@@ -940,15 +984,23 @@ main#mainContent > * {
   min-width: 200px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
-.legend-row {
+.donut-legend .legend-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 13px;
-  padding: 3px 0;
+  gap: 8px;
+  font-size: 13.5px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s ease;
+  cursor: default;
+}
+
+.donut-legend .legend-row:hover {
+  background: #f8fafc;
+  transform: translateX(4px);
 }
 
 .legend-swatch {
@@ -960,17 +1012,37 @@ main#mainContent > * {
 
 .legend-label { flex: 1; font-weight: 500; color: #334155; }
 .legend-pct { color: var(--text-muted); font-size: 12px; font-weight: 500; width: 36px; text-align: right; }
-.legend-amt { font-family: 'IBM Plex Mono', monospace; font-weight: 600; color: #0f172a; width: 80px; text-align: right; }
+.legend-amt { font-family: inherit; font-variant-numeric: normal; font-weight: 600; color: #0f172a; width: 80px; text-align: right; letter-spacing: normal; }
 
 /* ===== Bar Compare SVG Chart (Income vs Expenses) ===== */
 .bar-chart-card { display: flex; flex-direction: column; }
-.chart-legend { display: flex; align-items: center; gap: 16px; font-size: 12px; font-weight: 600; color: var(--text-muted); }
-.legend-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 5px; }
+.chart-legend {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.chart-legend .legend-item,
+.chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+  margin: 0;
+}
 
 .svg-bar-chart-wrap {
   width: 100%;
   height: 220px;
-  margin-top: 14px;
+  margin-top: 6px;
 }
 
 .svg-bar-chart-wrap svg {
@@ -979,17 +1051,37 @@ main#mainContent > * {
   overflow: visible;
 }
 
+.bar-group rect {
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease;
+  transform-origin: bottom;
+}
+
+.bar-group:hover rect {
+  transform: scaleY(1.03);
+  filter: brightness(1.08);
+}
+
 /* ===== Daily Balance Trend SVG Chart ===== */
 .svg-line-chart-wrap {
   width: 100%;
-  height: 200px;
-  margin-top: 14px;
+  height: 220px;
+  margin-top: 6px;
 }
 
 .svg-line-chart-wrap svg {
   width: 100%;
   height: 100%;
   overflow: visible;
+}
+
+.trend-dot-group {
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  cursor: pointer;
+}
+
+.trend-dot-group:hover circle:first-child {
+  r: 7;
+  stroke-width: 3.5;
 }
 
 /* ===== Budget Utilization Bars ===== */
@@ -1014,7 +1106,7 @@ main#mainContent > * {
 }
 
 .bb-name { color: #334155; }
-.bb-amounts { font-family: 'IBM Plex Mono', monospace; color: var(--text-muted); }
+.bb-amounts { font-family: inherit; color: var(--text-muted); letter-spacing: normal; }
 
 .bb-track {
   height: 8px;
@@ -1218,7 +1310,7 @@ main#mainContent > * {
   gap: 3px;
 }
 
-.ur-amt { font-family: 'IBM Plex Mono', monospace; font-weight: 700; font-size: 13.5px; color: #0f172a; }
+.ur-amt { font-family: inherit; font-weight: 600; font-size: 13.5px; color: #0f172a; letter-spacing: normal; }
 
 .status-badge {
   font-size: 10.5px;
@@ -1443,8 +1535,8 @@ table.data-table tr:hover td { background: #f8fafc; }
 .type-pill.expense { background: #fee2e2; color: #991b1b; }
 .type-pill.income { background: #dcfce7; color: #166534; }
 
-.amt-pos { font-family: 'IBM Plex Mono', monospace; font-weight: 700; color: #16a34a; }
-.amt-neg { font-family: 'IBM Plex Mono', monospace; font-weight: 700; color: #dc2626; }
+.amt-pos { font-family: inherit; font-weight: 600; color: #16a34a; letter-spacing: normal; }
+.amt-neg { font-family: inherit; font-weight: 600; color: #dc2626; letter-spacing: normal; }
 
 .pagination-bar {
   display: flex;
@@ -1548,12 +1640,15 @@ table.data-table tr:hover td { background: #f8fafc; }
 
 .auth-brand { text-align: center; margin-bottom: 24px; }
 .auth-brand-logo {
-  max-height: 64px;
-  max-width: 260px;
-  width: auto;
-  margin: 0 auto 10px;
+  max-height: 120px;
+  max-width: 120px;
+  width: 120px;
+  height: 120px;
+  margin: 0 auto 14px;
   display: block;
   object-fit: contain;
+  border-radius: 18px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
 }
 .auth-logo-icon {
   width: 48px;
@@ -1569,7 +1664,7 @@ table.data-table tr:hover td { background: #f8fafc; }
 }
 
 .auth-logo-icon svg { width: 28px; height: 28px; }
-.auth-brand h1 { font-size: 24px; font-weight: 800; }
+.auth-brand h1 { font-family: var(--font-heading); font-size: 24px; font-weight: 700; color: #0f172a; }
 .auth-brand .tagline { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
 
 .auth-tabs { display: flex; border-bottom: 1px solid var(--border-color); margin-bottom: 20px; }
@@ -1733,13 +1828,15 @@ footer {
 }
 
 .date-time {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-smooth-number);
+  font-variant-numeric: tabular-nums;
   font-weight: 700;
   color: #4f46e5;
   background: #eef2ff;
   padding: 2px 8px;
   border-radius: 6px;
   font-size: 11.5px;
+  letter-spacing: -0.01em;
 }
 
 /* ===== PASSWORD MANAGER VAULT STYLES ===== */
@@ -2077,7 +2174,7 @@ footer {
 }
 
 .pwd-field-val {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 13px;
   font-weight: 600;
   color: #1e293b;
@@ -2410,11 +2507,13 @@ footer {
 }
 
 .donut-popover .popover-amt {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-smooth-number);
+  font-variant-numeric: tabular-nums;
   font-weight: 800;
   color: #6366f1;
   font-size: 14px;
   margin: 2px 0;
+  letter-spacing: -0.02em;
 }
 
 .donut-popover .popover-pct {
@@ -2775,9 +2874,11 @@ footer {
 .health-score-num {
   font-size: 26px;
   font-weight: 800;
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-smooth-number);
+  font-variant-numeric: tabular-nums lining-nums;
   color: #10b981;
   line-height: 1;
+  letter-spacing: -0.02em;
 }
 
 .health-score-lbl {
@@ -2847,10 +2948,11 @@ footer {
 }
 
 .id-number-display {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-smooth-number);
+  font-variant-numeric: tabular-nums;
   font-size: 18px;
   font-weight: 700;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.05em;
   color: #ffffff;
   margin-bottom: 12px;
 }
@@ -3375,7 +3477,7 @@ input:focus, select:focus, textarea:focus {
   max-width: 860px;
   width: 100%;
   margin: 0 auto;
-  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   line-height: 1.8;
   font-size: 15px;
   box-sizing: border-box;
@@ -4739,14 +4841,15 @@ input:checked + .slider:before {
 }
 
 .tt-time-slot {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-smooth-number);
+  font-variant-numeric: tabular-nums;
   font-size: 13.5px;
   font-weight: 700;
   color: #0f172a;
   display: flex;
   align-items: center;
   gap: 6px;
-  letter-spacing: -0.3px;
+  letter-spacing: -0.2px;
 }
 
 .tt-time-meta {
@@ -4798,6 +4901,22 @@ input:checked + .slider:before {
 .timetable-schedule-row.is-done .tt-task-heading {
   text-decoration: line-through;
   color: #94a3b8;
+}
+
+.tt-empty-title-placeholder {
+  color: #94a3b8;
+  font-style: italic;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: color 0.2s ease;
+}
+
+.tt-empty-title-placeholder:hover {
+  color: #4f46e5;
+  text-decoration: underline;
 }
 
 .tt-task-desc {
@@ -4985,7 +5104,8 @@ input:checked + .slider:before {
   border-radius: 6px;
   border: 1px solid #cbd5e1;
   background: #ffffff;
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-smooth-number);
+  font-variant-numeric: tabular-nums;
   font-size: 13.5px;
   font-weight: 700;
   color: #0f172a;
