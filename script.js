@@ -930,7 +930,8 @@ function getMonthlySavingsData(targetMonthKey) {
   const currentNet = currentInc - incomeExp;
 
   const remainingRollover = Math.max(0, lastMonthBalance - savingsExp);
-  const totalSavings = isFirst ? 0 : Math.max(0, remainingRollover + (currentNet > 0 ? currentNet : 0));
+  // Do not add currentNet to Savings; savings only contains previous balance amount (minus savings-funded expenses)
+  const totalSavings = isFirst ? 0 : remainingRollover;
 
   return {
     monthKey,
@@ -1159,7 +1160,12 @@ const TRANSLATIONS = {
     // Dashboard View
     "MONTHLY INCOME": "MONTHLY INCOME",
     "MONTHLY EXPENSES": "MONTHLY EXPENSES",
-    "NET BALANCE": "NET BALANCE",
+    "NET BALANCE": "NET AMOUNT",
+    "NET AMOUNT": "NET AMOUNT",
+    "Net Amount": "Net Amount",
+    "Net Balance": "Net Amount",
+    "Remaining from income": "Remaining from income",
+    "Deficit from income": "Deficit from income",
     "Savings": "Savings",
     "Spending by Category": "Spending by Category",
     "Total Expenses": "Total Expenses",
@@ -1306,7 +1312,12 @@ const TRANSLATIONS = {
     // Dashboard View
     "MONTHLY INCOME": "மாதாந்திர வருமானம்",
     "MONTHLY EXPENSES": "மாதாந்திர செலவுகள்",
-    "NET BALANCE": "நிகர இருப்பு",
+    "NET BALANCE": "நிகரத் தொகை",
+    "NET AMOUNT": "நிகரத் தொகை",
+    "Net Amount": "நிகரத் தொகை",
+    "Net Balance": "நிகரத் தொகை",
+    "Remaining from income": "வருமானத்திலிருந்து மீதம்",
+    "Deficit from income": "வருமானத்தில் பற்றாக்குறை",
     "Savings": "சேமிப்பு",
     "Spending by Category": "வகை வாரியாக செலவுகள்",
     "Total Expenses": "மொத்த செலவுகள்",
@@ -1453,7 +1464,12 @@ const TRANSLATIONS = {
     // Dashboard View
     "MONTHLY INCOME": "मासिक आय",
     "MONTHLY EXPENSES": "मासिक व्यय",
-    "NET BALANCE": "शुद्ध शेष",
+    "NET BALANCE": "शुद्ध राशि",
+    "NET AMOUNT": "शुद्ध राशि",
+    "Net Amount": "शुद्ध राशि",
+    "Net Balance": "शुद्ध राशि",
+    "Remaining from income": "आय से शेष",
+    "Deficit from income": "आय में घाटा",
     "Savings": "बचत",
     "Spending by Category": "श्रेणी अनुसार व्यय",
     "Total Expenses": "कुल व्यय",
@@ -1598,7 +1614,12 @@ const TRANSLATIONS = {
 
     "MONTHLY INCOME": "പ്രതിമാസ വരുമാനം",
     "MONTHLY EXPENSES": "പ്രതിമാസ ചെലവുകൾ",
-    "NET BALANCE": "അറ്റ ബാലൻസ്",
+    "NET BALANCE": "അറ്റ തുക",
+    "NET AMOUNT": "അറ്റ തുക",
+    "Net Amount": "അറ്റ തുക",
+    "Net Balance": "അറ്റ തുക",
+    "Remaining from income": "വരുമാനത്തിൽ നിന്നുള്ള ബാക്കി",
+    "Deficit from income": "വരുമാനത്തിലെ കമ്മി",
     "Savings": "സമ്പാദ്യം",
     "Spending by Category": "വിഭാഗം തിരിച്ചുള്ള ചെലവ്",
     "Total Expenses": "ആകെ ചെലവുകൾ",
@@ -1738,7 +1759,12 @@ const TRANSLATIONS = {
 
     "MONTHLY INCOME": "నెలవారీ ఆదాయం",
     "MONTHLY EXPENSES": "నెలవారీ ఖర్చులు",
-    "NET BALANCE": "నికర నిల్వ",
+    "NET BALANCE": "నికర మొత్తం",
+    "NET AMOUNT": "నికర మొత్తం",
+    "Net Amount": "నికర మొత్తం",
+    "Net Balance": "నికర మొత్తం",
+    "Remaining from income": "ఆదాయం నుండి మిగిలినది",
+    "Deficit from income": "ఆదాయంలో లోటు",
     "Savings": "పొదుపు",
     "Spending by Category": "వర్గం వారీగా ఖర్చులు",
     "Total Expenses": "మొత్తం ఖర్చులు",
@@ -1878,7 +1904,12 @@ const TRANSLATIONS = {
 
     "MONTHLY INCOME": "INGRESOS MENSUALES",
     "MONTHLY EXPENSES": "GASTOS MENSUALES",
-    "NET BALANCE": "BALANCE NETO",
+    "NET BALANCE": "IMPORTE NETO",
+    "NET AMOUNT": "IMPORTE NETO",
+    "Net Amount": "Importe neto",
+    "Net Balance": "Importe neto",
+    "Remaining from income": "Restante de ingresos",
+    "Deficit from income": "Déficit de ingresos",
     "Savings": "Ahorros",
     "Spending by Category": "Gastos por categoría",
     "Total Expenses": "Gastos totales",
@@ -2018,7 +2049,12 @@ const TRANSLATIONS = {
 
     "MONTHLY INCOME": "REVENU MENSUEL",
     "MONTHLY EXPENSES": "DÉPENSES MENSUELLES",
-    "NET BALANCE": "SOLDE NET",
+    "NET BALANCE": "MONTANT NET",
+    "NET AMOUNT": "MONTANT NET",
+    "Net Amount": "Montant net",
+    "Net Balance": "Montant net",
+    "Remaining from income": "Restant des revenus",
+    "Deficit from income": "Déficit des revenus",
     "Savings": "Épargne",
     "Spending by Category": "Dépenses par catégorie",
     "Total Expenses": "Total des dépenses",
@@ -3048,7 +3084,8 @@ function viewDashboard() {
   const exp = mExpList.reduce((s, e) => s + (e.amount || 0), 0);
   const incomeExp = totalIncomeExpenseForMonth(currentMonth);
   const savingsExp = totalSavingsExpenseForMonth(currentMonth);
-  const bal = getMonthlyBalance(currentMonth);
+  const netAmount = inc - incomeExp;
+  const bal = netAmount;
   const cats = categoryTotalsForMonth(currentMonth);
 
   // Monthly savings with last month balance rollover
@@ -3107,10 +3144,10 @@ function viewDashboard() {
     <div class="stat-block c-indigo">
       <div class="sb-top">
         <div class="sb-icon">💳</div>
-        <div class="sb-delta">${inc > 0 ? Math.round((bal / inc) * 100) + '%' : '0%'}</div>
+        <div class="sb-delta">${inc > 0 ? Math.round((netAmount / inc) * 100) + '%' : '0%'}</div>
       </div>
-      <div class="sb-label">${t('NET BALANCE')}</div>
-      <div class="sb-value num">${fmt(bal)}</div>
+      <div class="sb-label">${t('NET AMOUNT')}</div>
+      <div class="sb-value num">${fmt(netAmount)}</div>
     </div>
     ${!savingsData.isFirstMonth ? `
     <div class="stat-block c-gold" style="cursor: pointer;" onclick="goToBalanceSettingsPage()" title="${t('Click to view & manage Monthly Balance History')}">
@@ -3469,7 +3506,8 @@ function viewFinance() {
   const exp = mExpList.reduce((s, e) => s + (e.amount || 0), 0);
   const incomeExp = totalIncomeExpenseForMonth(currentMonth);
   const savingsExp = totalSavingsExpenseForMonth(currentMonth);
-  const bal = getMonthlyBalance(currentMonth);
+  const netAmount = inc - incomeExp;
+  const bal = netAmount;
   const cats = categoryTotalsForMonth(currentMonth);
 
   return `
@@ -3516,11 +3554,11 @@ function viewFinance() {
 
     <div class="soft-stat-block blue">
       <div class="ss-top">
-        <span class="ss-label">Net Balance</span>
+        <span class="ss-label">${t('Net Amount')}</span>
         <div class="ss-icon">💳</div>
       </div>
-      <div class="ss-value num">${fmt(bal)}</div>
-      <div class="ss-sub">${bal >= 0 ? 'Surplus balance' : 'Deficit balance'}</div>
+      <div class="ss-value num">${fmt(netAmount)}</div>
+      <div class="ss-sub">${netAmount >= 0 ? t('Remaining from income') : t('Deficit from income')}</div>
     </div>
 
     <div class="soft-stat-block yellow">
