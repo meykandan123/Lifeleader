@@ -5909,38 +5909,38 @@ function renderSingleDocumentRow(d) {
   }
 
   return `
-  <div class="upcoming-row" style="padding: 16px 18px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; background: #ffffff;">
-    <div class="ur-left" style="display: flex; align-items: center; gap: 14px; flex: 1; min-width: 240px;">
-      <div class="ur-icon" style="background: ${iconBg}; color: ${iconColor}; width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; box-shadow: 0 2px 6px rgba(0,0,0,0.06); border: 1px solid rgba(0,0,0,0.04);">
+  <div class="upcoming-row" style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; background: #ffffff;">
+    <div class="ur-left" style="display: flex; align-items: center; gap: 12px; flex: 1; min-width: 220px;">
+      <div class="ur-icon" style="background: ${iconBg}; color: ${iconColor}; width: 38px; height: 38px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; box-shadow: 0 2px 5px rgba(0,0,0,0.05); border: 1px solid rgba(0,0,0,0.04);">
         ${icon}
       </div>
       <div>
-        <div class="ur-title" style="font-weight: 800; color: #0f172a; font-size: 15px; letter-spacing: -0.2px;">${escapeHtml(d.name || d.documentTitle)}</div>
-        <div class="ur-sub" style="font-size: 12px; color: var(--text-muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 4px;">
+        <div class="ur-title" style="font-weight: 800; color: #0f172a; font-size: 14.5px; letter-spacing: -0.2px;">${escapeHtml(d.name || d.documentTitle)}</div>
+        <div class="ur-sub" style="font-size: 12px; color: var(--text-muted); display: flex; gap: 7px; align-items: center; flex-wrap: wrap; margin-top: 3px;">
           <span>Type: <strong style="color: #0f172a; font-weight: 700;">${escapeHtml(d.documentType || d.type || 'Document')}</strong></span>
-          <span style="background: #e0e7ff; color: #4338ca; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 700;">${escapeHtml(d.category || 'Yours Document')}</span>
-          ${isPdf ? `<span style="background: #fee2e2; color: #991b1b; padding: 2px 6px; border-radius: 4px; font-size: 10.5px; font-weight: 700;">PDF</span>` : ''}
-          ${isImg ? `<span style="background: #e0f2fe; color: #0369a1; padding: 2px 6px; border-radius: 4px; font-size: 10.5px; font-weight: 700;">IMAGE</span>` : ''}
+          <span style="background: #e0e7ff; color: #4338ca; padding: 1.5px 7px; border-radius: 5px; font-size: 10.5px; font-weight: 700;">${escapeHtml(d.category || 'Yours Document')}</span>
+          ${isPdf ? `<span style="background: #fee2e2; color: #991b1b; padding: 1.5px 6px; border-radius: 4px; font-size: 10px; font-weight: 700;">PDF</span>` : ''}
+          ${isImg ? `<span style="background: #e0f2fe; color: #0369a1; padding: 1.5px 6px; border-radius: 4px; font-size: 10px; font-weight: 700;">IMAGE</span>` : ''}
           ${d.fileName ? `• <span style="color: #4f46e5; font-weight: 600;">📎 ${escapeHtml(d.fileName)}</span>` : ''}
         </div>
       </div>
     </div>
 
     <div class="ur-right" style="display: flex; flex-direction: row; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap;">
-      <div style="text-align: right; margin-right: 6px;">
-        <div class="ur-amt num" style="font-size: 12.5px; font-weight: 700; color: #334155; white-space: nowrap;">Uploaded: ${escapeHtml(d.date || 'Today')}</div>
+      <div style="text-align: right; margin-right: 4px;">
+        <div class="ur-amt num" style="font-size: 12px; font-weight: 700; color: #334155; white-space: nowrap;">Uploaded: ${escapeHtml(d.date || 'Today')}</div>
       </div>
 
-      <div class="doc-btn-group" style="display: flex; flex-direction: row; align-items: center; gap: 8px; flex-wrap: nowrap;">
-        <button type="button" onclick="previewDocument(${d.id})" class="pwd-card-btn" style="background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; padding: 7px 15px; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; white-space: nowrap; box-shadow: 0 1px 3px rgba(79,70,229,0.1);" title="View Document Preview">
+      <div class="doc-btn-group" style="display: flex; flex-direction: row; align-items: center; gap: 6px; flex-wrap: nowrap;">
+        <button type="button" onclick="previewDocument(${d.id})" class="pwd-card-btn" style="background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; padding: 5px 11px; border-radius: 6px; font-weight: 700; font-size: 11.5px; cursor: pointer; display: inline-flex; align-items: center; white-space: nowrap; box-shadow: 0 1px 2px rgba(79,70,229,0.08);" title="View Document Preview">
           View
         </button>
 
-        <button type="button" onclick="downloadDocument(${d.id})" class="pwd-card-btn" style="background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; padding: 7px 14px; border-radius: 8px; font-weight: 700; font-size: 12.5px; cursor: pointer; display: inline-flex; align-items: center; white-space: nowrap;" title="Download File">
+        <button type="button" onclick="downloadDocument(${d.id})" class="pwd-card-btn" style="background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; padding: 5px 10px; border-radius: 6px; font-weight: 700; font-size: 11.5px; cursor: pointer; display: inline-flex; align-items: center; white-space: nowrap;" title="Download File">
           Download
         </button>
 
-        <button type="button" onclick="deleteDocument(${d.id})" class="pwd-btn-danger" style="background: #fef2f2; color: #dc2626; border: 1px solid #fee2e2; padding: 7px 14px; border-radius: 8px; font-weight: 700; font-size: 12.5px; cursor: pointer; white-space: nowrap;" title="Delete Document">
+        <button type="button" onclick="deleteDocument(${d.id})" class="pwd-btn-danger" style="background: #fef2f2; color: #dc2626; border: 1px solid #fee2e2; padding: 5px 10px; border-radius: 6px; font-weight: 700; font-size: 11.5px; cursor: pointer; white-space: nowrap;" title="Delete Document">
           Delete
         </button>
       </div>
@@ -5966,8 +5966,7 @@ function handleDocSearch(query) {
     const name = (d.name || d.documentTitle || "").toLowerCase();
     const type = (d.documentType || d.type || "").toLowerCase();
     const fileName = (d.fileName || "").toLowerCase();
-    const category = (d.category || "").toLowerCase();
-    return name.includes(q) || type.includes(q) || fileName.includes(q) || category.includes(q);
+    return name.includes(q) || type.includes(q) || fileName.includes(q);
   });
 
   if (countEl) {
@@ -5984,11 +5983,11 @@ function handleDocSearch(query) {
     container.innerHTML = matched.map(renderSingleDocumentRow).join("");
   } else if (q) {
     container.innerHTML = `
-      <div style="padding: 40px 20px; text-align: center; color: var(--text-muted);">
-        <div style="font-size: 38px; margin-bottom: 8px;">🔍</div>
-        <div style="font-weight: 700; color: #1e293b; font-size: 15px; margin-bottom: 4px;">No documents match "${escapeHtml(activeDocSearchQuery)}"</div>
-        <div style="font-size: 13px; color: #64748b; margin-bottom: 12px;">Try searching by document name (e.g. Resume) or type (e.g. ID Card, Certificate).</div>
-        <button type="button" onclick="clearDocSearch()" class="pwd-card-btn" style="background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; padding: 6px 16px; border-radius: 8px; font-weight: 700; font-size: 12.5px; cursor: pointer;">
+      <div style="padding: 35px 20px; text-align: center; color: var(--text-muted);">
+        <div style="font-size: 32px; margin-bottom: 6px;">🔍</div>
+        <div style="font-weight: 700; color: #1e293b; font-size: 14.5px; margin-bottom: 4px;">No documents on the name "${escapeHtml(activeDocSearchQuery)}"</div>
+        <div style="font-size: 12.5px; color: #64748b; margin-bottom: 12px;">No documents found matching this name or document type.</div>
+        <button type="button" onclick="clearDocSearch()" class="pwd-card-btn" style="background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; padding: 5px 13px; border-radius: 6px; font-weight: 700; font-size: 11.5px; cursor: pointer;">
           Clear Search
         </button>
       </div>
@@ -5996,7 +5995,7 @@ function handleDocSearch(query) {
   } else {
     container.innerHTML = `
       <div style="padding: 35px 20px; text-align: center; color: var(--text-muted);">
-        <div style="font-size: 36px; margin-bottom: 8px;">📂</div>
+        <div style="font-size: 34px; margin-bottom: 6px;">📂</div>
         <div style="font-weight: 700; color: #1e293b; margin-bottom: 4px;">No ${escapeHtml(activeDocCategory.toLowerCase())}s saved in vault</div>
         <div style="font-size: 13px;">Upload and save documents under "${escapeHtml(activeDocCategory)}" using the form below.</div>
       </div>
@@ -6025,8 +6024,7 @@ function viewDocuments() {
     const name = (d.name || d.documentTitle || "").toLowerCase();
     const type = (d.documentType || d.type || "").toLowerCase();
     const fileName = (d.fileName || "").toLowerCase();
-    const category = (d.category || "").toLowerCase();
-    return name.includes(q) || type.includes(q) || fileName.includes(q) || category.includes(q);
+    return name.includes(q) || type.includes(q) || fileName.includes(q);
   });
   const totalUploaded = allCategoryDocs.filter(d => d.fileData || d.fileUrl || d.fileName).length;
 
@@ -6063,23 +6061,23 @@ function viewDocuments() {
 
       <!-- Document Category Navigation Pills -->
       <div class="filter-pills">
-        <button type="button" class="filter-pill ${activeDocCategory === 'Yours Document' ? 'active' : ''}" onclick="switchDocCategory('Yours Document')">
+        <button type="button" class="filter-pill ${activeDocCategory === 'Yours Document' ? 'active' : ''}" onclick="switchDocCategory('Yours Document')" style="padding: 5px 12px; font-size: 12px;">
           Yours Document
         </button>
-        <button type="button" class="filter-pill ${activeDocCategory === 'Others Document' ? 'active' : ''}" onclick="switchDocCategory('Others Document')">
+        <button type="button" class="filter-pill ${activeDocCategory === 'Others Document' ? 'active' : ''}" onclick="switchDocCategory('Others Document')" style="padding: 5px 12px; font-size: 12px;">
           Others Document
         </button>
       </div>
     </div>
 
     <!-- Document Search & Filter Bar -->
-    <div style="padding: 12px 18px; border-bottom: 1px solid var(--border-color); background: #f8fafc; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
-      <div style="position: relative; flex: 1; min-width: 260px; max-width: 440px;">
-        <span style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: #64748b; font-size: 14px; pointer-events: none;">🔍</span>
-        <input type="text" id="docSearchInput" value="${escapeHtml(activeDocSearchQuery)}" oninput="handleDocSearch(this.value)" placeholder="Search by document name or type (e.g. Resume, ID Card)..." style="width: 100%; padding: 8px 34px 8px 34px; border-radius: 10px; border: 1px solid var(--border-color); font-size: 13px; outline: none; background: #ffffff; box-sizing: border-box; transition: all 0.2s ease;" />
-        <button type="button" id="docSearchClearBtn" onclick="clearDocSearch()" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: #e2e8f0; border: none; border-radius: 50%; width: 18px; height: 18px; display: ${activeDocSearchQuery ? 'flex' : 'none'}; align-items: center; justify-content: center; color: #475569; font-size: 11px; cursor: pointer; padding: 0;" title="Clear Search">✕</button>
+    <div style="padding: 9px 16px; border-bottom: 1px solid var(--border-color); background: #f8fafc; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+      <div style="position: relative; flex: 1; min-width: 220px; max-width: 360px;">
+        <span style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: #64748b; font-size: 13px; pointer-events: none;">🔍</span>
+        <input type="text" id="docSearchInput" value="${escapeHtml(activeDocSearchQuery)}" oninput="handleDocSearch(this.value)" placeholder="Search by document name or type..." style="width: 100%; padding: 6px 28px 6px 30px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 12px; outline: none; background: #ffffff; box-sizing: border-box; transition: all 0.2s ease;" />
+        <button type="button" id="docSearchClearBtn" onclick="clearDocSearch()" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: #e2e8f0; border: none; border-radius: 50%; width: 16px; height: 16px; display: ${activeDocSearchQuery ? 'flex' : 'none'}; align-items: center; justify-content: center; color: #475569; font-size: 10px; cursor: pointer; padding: 0;" title="Clear Search">✕</button>
       </div>
-      <div id="docSearchCount" style="font-size: 12.5px; color: #64748b; font-weight: 600;">
+      <div id="docSearchCount" style="font-size: 12px; color: #64748b; font-weight: 600;">
         ${activeDocSearchQuery ? `Found <strong>${filteredDocs.length}</strong> of ${allCategoryDocs.length} document${allCategoryDocs.length === 1 ? '' : 's'}` : `Total: <strong>${allCategoryDocs.length}</strong> document${allCategoryDocs.length === 1 ? '' : 's'}`}
       </div>
     </div>
@@ -6089,16 +6087,16 @@ function viewDocuments() {
       ${filteredDocs.map(renderSingleDocumentRow).join("")}
 
       ${filteredDocs.length === 0 ? (activeDocSearchQuery ? `
-        <div style="padding: 40px 20px; text-align: center; color: var(--text-muted);">
-          <div style="font-size: 38px; margin-bottom: 8px;">🔍</div>
-          <div style="font-weight: 700; color: #1e293b; font-size: 15px; margin-bottom: 4px;">No documents match "${escapeHtml(activeDocSearchQuery)}"</div>
-          <div style="font-size: 13px; color: #64748b; margin-bottom: 12px;">Try searching by document name (e.g. Resume) or type (e.g. ID Card, Certificate).</div>
-          <button type="button" onclick="clearDocSearch()" class="pwd-card-btn" style="background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; padding: 6px 16px; border-radius: 8px; font-weight: 700; font-size: 12.5px; cursor: pointer;">
+        <div style="padding: 35px 20px; text-align: center; color: var(--text-muted);">
+          <div style="font-size: 32px; margin-bottom: 6px;">🔍</div>
+          <div style="font-weight: 700; color: #1e293b; font-size: 14.5px; margin-bottom: 4px;">No documents on the name "${escapeHtml(activeDocSearchQuery)}"</div>
+          <div style="font-size: 12.5px; color: #64748b; margin-bottom: 12px;">No documents found matching this name or document type.</div>
+          <button type="button" onclick="clearDocSearch()" class="pwd-card-btn" style="background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; padding: 5px 13px; border-radius: 6px; font-weight: 700; font-size: 11.5px; cursor: pointer;">
             Clear Search
           </button>
         </div>` : `
         <div style="padding: 35px 20px; text-align: center; color: var(--text-muted);">
-          <div style="font-size: 36px; margin-bottom: 8px;">📂</div>
+          <div style="font-size: 34px; margin-bottom: 6px;">📂</div>
           <div style="font-weight: 700; color: #1e293b; margin-bottom: 4px;">No ${escapeHtml(activeDocCategory.toLowerCase())}s saved in vault</div>
           <div style="font-size: 13px;">Upload and save documents under "${escapeHtml(activeDocCategory)}" using the form below.</div>
         </div>`) : ''}
