@@ -11,7 +11,7 @@
   <meta name="keywords" content="lifeledger, life ledger ai, personal finance dashboard, expense tracker, free budget planner, cashflow analytics, life operating system, free money manager, encrypted password manager, habit tracker, daily routine planner, personal accounting software, monthly budget calculator, income and expense tracker, smart savings tracker, bill organizer, best finance app, multi-device finance sync">
   <meta name="author" content="LifeLedger AI">
   <meta name="publisher" content="LifeLedger AI">
-  <meta name="copyright" content="LifeLedger AI">
+  <meta name="copyright" content="LifeLedger AI">j
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
   <meta name="googlebot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1">
   <meta name="bingbot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1">
@@ -134,7 +134,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@500;600;700;800&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=20261012_fitwidth_v4">
 
   <!-- Global Error & Browser Extension Noise Interceptor -->
   <script>
@@ -146,6 +146,9 @@
         var s = String(str).toLowerCase();
         return s.includes('chrome-extension://') ||
                s.includes('colors_css_updater') ||
+               s.includes('color_change_listener') ||
+               s.includes('invalid') ||
+               s.includes('indexing all pdf objects') ||
                s.includes('err_blocked_by_client') ||
                s.includes('blocked_by_client') ||
                s.includes('net::err_failed') ||
@@ -171,11 +174,16 @@
                s.includes('firestore.googleapis.com');
       }
 
-      // Resilient fetch wrapper with automatic retry on transient socket drops/resets
+      // Intercept chrome-extension:// and colors_css_updater before the browser network stack triggers net::ERR_FAILED
       if (typeof window.fetch === 'function') {
         var origFetch = window.fetch;
         window.fetch = async function(resource, init) {
           var url = typeof resource === 'string' ? resource : (resource && resource.url ? resource.url : '');
+          var u = String(url || '').toLowerCase();
+          if (u.includes('chrome-extension://') || u.includes('invalid') || u.includes('colors_css_updater') || u.includes('color_change_listener')) {
+            return new Response('', { status: 200, statusText: 'OK', headers: new Headers({ 'Content-Type': 'text/css' }) });
+          }
+
           var isAuthEndpoint = url.includes('securetoken.googleapis.com') || url.includes('identitytoolkit.googleapis.com');
           if (!isAuthEndpoint) {
             return origFetch.apply(this, arguments);
@@ -192,6 +200,64 @@
         };
       }
 
+      // Intercept XMLHttpRequest for extension resource requests
+      if (typeof window.XMLHttpRequest === 'function') {
+        var origOpen = XMLHttpRequest.prototype.open;
+        var origSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.open = function(method, url) {
+          var u = String(url || '').toLowerCase();
+          if (u.includes('chrome-extension://') || u.includes('invalid') || u.includes('colors_css_updater') || u.includes('color_change_listener')) {
+            this.__isBlockedNoise = true;
+          }
+          return origOpen.apply(this, arguments);
+        };
+        XMLHttpRequest.prototype.send = function() {
+          if (this.__isBlockedNoise) {
+            try {
+              Object.defineProperty(this, 'readyState', { value: 4, writable: true, configurable: true });
+              Object.defineProperty(this, 'status', { value: 200, writable: true, configurable: true });
+              Object.defineProperty(this, 'statusText', { value: 'OK', writable: true, configurable: true });
+              Object.defineProperty(this, 'responseText', { value: '', writable: true, configurable: true });
+              if (typeof this.onreadystatechange === 'function') this.onreadystatechange();
+              if (typeof this.onload === 'function') this.onload();
+            } catch (e) {}
+            return;
+          }
+          return origSend.apply(this, arguments);
+        };
+      }
+
+      // Intercept DOM elements injecting chrome-extension://invalid/
+      try {
+        var origSetAttribute = Element.prototype.setAttribute;
+        Element.prototype.setAttribute = function(name, val) {
+          var n = String(name || '').toLowerCase();
+          var v = String(val || '').toLowerCase();
+          if ((n === 'href' || n === 'src') && (v.includes('chrome-extension://invalid') || v.includes('colors_css_updater'))) {
+            return;
+          }
+          return origSetAttribute.apply(this, arguments);
+        };
+
+        if (typeof HTMLLinkElement !== 'undefined') {
+          var linkDesc = Object.getOwnPropertyDescriptor(HTMLLinkElement.prototype, 'href');
+          if (linkDesc && linkDesc.set) {
+            var origLinkHrefSet = linkDesc.set;
+            Object.defineProperty(HTMLLinkElement.prototype, 'href', {
+              set: function(val) {
+                var v = String(val || '').toLowerCase();
+                if (v.includes('chrome-extension://invalid') || v.includes('colors_css_updater')) {
+                  return;
+                }
+                return origLinkHrefSet.call(this, val);
+              },
+              get: linkDesc.get,
+              configurable: true
+            });
+          }
+        }
+      } catch (e) {}
+
       // Safely filter console network noise
       var origError = console.error;
       console.error = function() {
@@ -203,7 +269,7 @@
       var origWarn = console.warn;
       console.warn = function() {
         var msg = Array.prototype.slice.call(arguments).map(function(a) { return String(a || ''); }).join(' ');
-        if (isMutedNoise(msg)) return;
+        if (isMutedNoise(msg) || msg.includes('Indexing all PDF objects')) return;
         origWarn.apply(console, arguments);
       };
 
@@ -335,8 +401,12 @@
         return val;
       }
       if (typeof val === 'string') {
+        // Never strip valid HTTPS/HTTP cloud storage URLs or vault file references
+        if (val.startsWith('http://') || val.startsWith('https://') || val.startsWith('vault_file://')) {
+          return val;
+        }
         if (aggressivePrune && val.startsWith('data:') && val.length > 5000) {
-          return ''; // Strip base64 file data in aggressive fallback
+          return ''; // Strip inline base64 file data in aggressive fallback
         }
         if (val.length > 750000) {
           return val.slice(0, 750000); // Guard against Firestore 1MB property limit
@@ -363,6 +433,17 @@
           if (!cleanKey) continue;
           if (v === undefined || typeof v === 'function' || typeof v === 'symbol') continue;
           if (aggressivePrune && (cleanKey === 'fileData' || cleanKey === 'pdfData' || cleanKey === 'documentFile')) {
+            // Keep if it is already a permanent cloud URL or subcollection reference
+            if (typeof v === 'string' && (v.startsWith('http://') || v.startsWith('https://') || v.startsWith('vault_file://'))) {
+              cleanObj[cleanKey] = v;
+              continue;
+            }
+            // Preserve link to Firestore Vault Subcollection if an item ID exists
+            const itemId = val.id || cleanObj.id;
+            if (itemId) {
+              cleanObj[cleanKey] = `vault_file://${itemId}`;
+              continue;
+            }
             cleanObj[cleanKey] = '';
             continue;
           }
@@ -378,9 +459,9 @@
       let clean = sanitizeForFirestore(data, forcePrune);
       try {
         const jsonStr = JSON.stringify(clean);
-        // If whole payload exceeds 800KB, prune large file attachments to keep document within Firestore 1MB quota
+        // If whole payload exceeds 800KB, prune large inline base64 file attachments to keep document within Firestore 1MB quota
         if (jsonStr && jsonStr.length > 800000) {
-          console.warn("⚠️ Cloud state size (" + Math.round(jsonStr.length / 1024) + " KB) exceeds safe document threshold. Pruning large file data for cloud persistence.");
+          console.warn("⚠️ Cloud state size (" + Math.round(jsonStr.length / 1024) + " KB) exceeds safe document threshold. Pruning large inline file data for cloud persistence.");
           clean = sanitizeForFirestore(data, true);
         }
       } catch (e) {
@@ -804,6 +885,162 @@
         } catch (err) {
           console.warn(`❌ [NoSQL Firestore] Error deleting item from ${collectionName}:`, err);
         }
+      },
+
+      // Permanent Cloud File Upload (Zero-CORS Firestore Vault Subcollection with Chunking)
+      uploadFileToCloud: async (userId, fileOrDataUrl, meta = {}) => {
+        if (!userId) return { success: false, error: "Missing userId" };
+        if (!db || firestoreBlocked || window.__firestoreBlocked) {
+          return { success: false, error: "Firestore unavailable" };
+        }
+        const cleanId = getCleanDocId(userId);
+        const fileId = String(meta.id || Date.now());
+        const fileName = meta.fileName || meta.name || `file_${fileId}`;
+        const fileType = meta.fileType || meta.type || "application/octet-stream";
+
+        try {
+          let dataUrlToStore = "";
+          if (typeof fileOrDataUrl === 'string') {
+            dataUrlToStore = fileOrDataUrl;
+          } else if (fileOrDataUrl instanceof Blob || fileOrDataUrl instanceof File) {
+            dataUrlToStore = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = e => resolve(e.target.result);
+              reader.onerror = reject;
+              reader.readAsDataURL(fileOrDataUrl);
+            });
+          }
+
+          if (!dataUrlToStore) {
+            return { success: false, error: "Empty file payload", fileId: fileId };
+          }
+
+          // Chunk threshold: 600,000 characters (~450KB) safely prevents Firestore 1MB document limit
+          const CHUNK_SIZE = 600000;
+          const totalLength = dataUrlToStore.length;
+
+          if (totalLength <= CHUNK_SIZE) {
+            // Fits in single subcollection document
+            const vaultDocRef = doc(db, "users", cleanId, "vault_files", fileId);
+            await setDoc(vaultDocRef, {
+              fileId: fileId,
+              fileName: fileName,
+              fileType: fileType,
+              chunkCount: 1,
+              fileData: dataUrlToStore,
+              updatedAt: new Date().toISOString()
+            });
+            console.log(`⚡ [Firestore Vault Subcollection] File stored in users/${cleanId}/vault_files/${fileId} (${Math.round(totalLength / 1024)} KB)`);
+          } else {
+            // Split across multiple chunk documents and save master record
+            const chunkCount = Math.ceil(totalLength / CHUNK_SIZE);
+            const chunkPromises = [];
+
+            for (let i = 0; i < chunkCount; i++) {
+              const start = i * CHUNK_SIZE;
+              const end = Math.min(start + CHUNK_SIZE, totalLength);
+              const chunkStr = dataUrlToStore.substring(start, end);
+              const partDocRef = doc(db, "users", cleanId, "vault_files", `${fileId}_p${i}`);
+              chunkPromises.push(
+                setDoc(partDocRef, {
+                  fileId: fileId,
+                  chunkIndex: i,
+                  chunkData: chunkStr,
+                  updatedAt: new Date().toISOString()
+                })
+              );
+            }
+
+            await Promise.all(chunkPromises);
+
+            const masterDocRef = doc(db, "users", cleanId, "vault_files", fileId);
+            await setDoc(masterDocRef, {
+              fileId: fileId,
+              fileName: fileName,
+              fileType: fileType,
+              chunkCount: chunkCount,
+              totalLength: totalLength,
+              updatedAt: new Date().toISOString()
+            });
+            console.log(`⚡ [Firestore Vault Subcollection] File stored across ${chunkCount} chunks in users/${cleanId}/vault_files/${fileId} (Total: ${Math.round(totalLength / 1024)} KB)`);
+          }
+
+          return {
+            success: true,
+            url: `vault_file://${fileId}`,
+            fileId: fileId,
+            dataUrl: dataUrlToStore,
+            storageType: "firestore_subcollection"
+          };
+        } catch (err) {
+          console.warn("⚠️ [Firestore Vault Upload Notice]:", err.message || err);
+          return { success: false, error: err.message || String(err), fileId: fileId };
+        }
+      },
+
+      // Fetch file data from Firestore Vault Subcollection (with automatic chunk reassembly)
+      fetchVaultFile: async (userId, fileId) => {
+        if (!userId || !fileId || !db) return null;
+        const cleanId = getCleanDocId(userId);
+        const cleanFileId = String(fileId).replace('vault_file://', '');
+        try {
+          const masterDocRef = doc(db, "users", cleanId, "vault_files", cleanFileId);
+          const snap = await getDoc(masterDocRef);
+          if (!snap.exists()) return null;
+
+          const data = snap.data();
+          if (!data) return null;
+
+          // Single-part document
+          if (data.fileData && (!data.chunkCount || data.chunkCount <= 1)) {
+            return data.fileData;
+          }
+
+          // Multi-part chunked document
+          const count = Number(data.chunkCount || 0);
+          if (count > 1) {
+            const partPromises = [];
+            for (let i = 0; i < count; i++) {
+              partPromises.push(getDoc(doc(db, "users", cleanId, "vault_files", `${cleanFileId}_p${i}`)));
+            }
+            const partSnaps = await Promise.all(partPromises);
+            const assembled = partSnaps.map(p => (p.exists() && p.data() ? (p.data().chunkData || "") : "")).join("");
+            if (assembled) return assembled;
+          }
+
+          if (data.fileData) return data.fileData;
+        } catch (err) {
+          console.warn("Fetch vault file notice:", err.message || err);
+        }
+        return null;
+      },
+
+      // Delete file from Firestore Subcollection (and clean up any chunks)
+      deleteFileFromCloud: async (userId, fileId) => {
+        if (!userId || !db) return;
+        const cleanId = getCleanDocId(userId);
+        const cleanFileId = String(fileId || "").replace('vault_file://', '');
+        if (!cleanFileId) return;
+
+        try {
+          const masterDocRef = doc(db, "users", cleanId, "vault_files", cleanFileId);
+          const snap = await getDoc(masterDocRef);
+          if (snap.exists()) {
+            const data = snap.data() || {};
+            const count = Number(data.chunkCount || 0);
+            if (count > 1) {
+              const deletePromises = [];
+              for (let i = 0; i < count; i++) {
+                deletePromises.push(deleteDoc(doc(db, "users", cleanId, "vault_files", `${cleanFileId}_p${i}`)));
+              }
+              await Promise.all(deletePromises);
+            }
+            await deleteDoc(masterDocRef);
+            console.log(`⚡ [Firestore Vault Subcollection] Deleted file & chunks for: ${cleanFileId}`);
+          }
+        } catch (e) {
+          console.debug("Firestore Subcollection delete notice:", e);
+        }
       }
     };
 
@@ -1193,7 +1430,6 @@
         </div>
         <div style="display: flex; align-items: center; gap: 10px; margin-left: 12px; flex-shrink: 0;">
           <div id="docViewerControls" style="display: flex; align-items: center; gap: 6px;"></div>
-          <button type="button" class="doc-modal-close" onclick="closeDocModal()" style="font-size: 26px; line-height: 1; cursor: pointer; background: #f1f5f9; border: 1px solid var(--border-color); color: #475569; width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease;" title="Close Preview">&times;</button>
         </div>
       </div>
       <div class="doc-modal-body" id="docModalBody">
@@ -1208,6 +1444,9 @@
           <a id="docModalDownloadBtn" href="#" download class="doc-modal-dl-btn" style="background: linear-gradient(135deg, #10b981, #059669); color: #fff; padding: 8px 18px; border-radius: 8px; font-weight: 700; font-size: 13px; text-decoration: none; display: inline-flex; align-items: center;">
             Download
           </a>
+          <button type="button" id="docModalCloseBtn" onclick="closeDocModal()" class="pwd-card-btn" style="background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; padding: 8px 18px; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; transition: all 0.2s ease;" title="Close Document Preview">
+            Close
+          </button>
         </div>
       </div>
     </div>
@@ -2058,7 +2297,7 @@
 
   <!-- PDF.js Engine for High-Definition Cross-Device PDF Canvas Rendering -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-  <script src="script.js"></script>
+  <script src="script.js?v=20261012_fitwidth_v4"></script>
 </body>
 
 </html>

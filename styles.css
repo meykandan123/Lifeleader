@@ -3427,9 +3427,9 @@ input:focus, select:focus, textarea:focus {
    ========================================================================== */
 
 #docPreviewModal .doc-modal-container {
-  max-width: 1080px !important;
-  width: 95vw !important;
-  max-height: 94vh !important;
+  max-width: 1200px !important;
+  width: 96vw !important;
+  max-height: 96vh !important;
   border-radius: 20px !important;
   box-shadow: 0 25px 60px -15px rgba(15, 23, 42, 0.45), 0 0 0 1px rgba(226, 232, 240, 0.8) !important;
   display: flex !important;
@@ -3440,25 +3440,29 @@ input:focus, select:focus, textarea:focus {
 }
 
 #docPreviewModal .doc-modal-header {
-  padding: 16px 24px !important;
+  padding: 14px 20px !important;
   background: #ffffff !important;
   border-bottom: 1px solid var(--border-color) !important;
   display: flex !important;
   align-items: center !important;
   justify-content: space-between !important;
   margin-bottom: 0 !important;
+  flex-wrap: wrap !important;
+  gap: 10px !important;
 }
 
 #docPreviewModal .doc-modal-body {
-  padding: 18px !important;
-  background: #0f172a !important;
-  min-height: 520px !important;
-  max-height: 75vh !important;
+  padding: 16px !important;
+  background: #0b1120 !important;
+  min-height: 320px !important;
+  max-height: calc(96vh - 128px) !important;
   overflow: auto !important;
   display: flex !important;
+  flex-direction: column !important;
   align-items: center !important;
-  justify-content: center !important;
+  justify-content: flex-start !important;
   flex: 1 !important;
+  box-sizing: border-box !important;
 }
 
 #docPreviewModal .doc-modal-footer {
@@ -3506,6 +3510,12 @@ input:focus, select:focus, textarea:focus {
 .doc-zoom-btn:hover {
   background: #e2e8f0;
   color: #0f172a;
+}
+
+#docModalCloseBtn:hover {
+  background: #e2e8f0 !important;
+  color: #0f172a !important;
+  border-color: #94a3b8 !important;
 }
 
 /* Smooth Table Row Hovers & Cards */

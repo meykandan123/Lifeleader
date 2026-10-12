@@ -556,6 +556,250 @@ function changeFinanceMonthFilter(val) {
   renderMain();
 }
 
+/* ===== INDEXEDDB FILE VAULT & IMAGE OPTIMIZER ===== */
+const FileVault = {
+  dbName: "LifeLeader_FileVault_DB",
+  dbVersion: 1,
+  dbInstance: null,
+
+  async getDB() {
+    if (this.dbInstance) return this.dbInstance;
+    if (typeof indexedDB === "undefined") return null;
+
+    return new Promise((resolve) => {
+      try {
+        const req = indexedDB.open(this.dbName, this.dbVersion);
+        req.onupgradeneeded = (e) => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains("files")) {
+            db.createObjectStore("files", { keyPath: "id" });
+          }
+        };
+        req.onsuccess = (e) => {
+          this.dbInstance = e.target.result;
+          resolve(this.dbInstance);
+        };
+        req.onerror = (e) => {
+          console.warn("IndexedDB FileVault open error:", e);
+          resolve(null);
+        };
+      } catch (err) {
+        console.warn("IndexedDB init catch:", err);
+        resolve(null);
+      }
+    });
+  },
+
+  async saveFile(id, fileData, meta = {}) {
+    if (!id || !fileData) return false;
+    const db = await this.getDB();
+    if (!db) return false;
+
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction("files", "readwrite");
+        const store = tx.objectStore("files");
+        const record = {
+          id: String(id),
+          fileData: fileData,
+          fileName: meta.fileName || meta.name || "",
+          fileType: meta.fileType || meta.type || "",
+          updatedAt: Date.now()
+        };
+        store.put(record);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      } catch (e) {
+        resolve(false);
+      }
+    });
+  },
+
+  async getFile(id) {
+    if (!id) return null;
+    const db = await this.getDB();
+    if (!db) return null;
+
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction("files", "readonly");
+        const store = tx.objectStore("files");
+        const req = store.get(String(id));
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      } catch (e) {
+        resolve(null);
+      }
+    });
+  },
+
+  async deleteFile(id) {
+    if (!id) return false;
+    const db = await this.getDB();
+    if (!db) return false;
+
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction("files", "readwrite");
+        const store = tx.objectStore("files");
+        store.delete(String(id));
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      } catch (e) {
+        resolve(false);
+      }
+    });
+  }
+};
+
+// Client-Side Image Optimizer: Resizes high-resolution phone photos & marksheet scans
+// to crisp, readable ~1600px dimensions, bringing 5MB down to ~180KB without losing text sharpness
+function optimizeImageForVault(file, maxWidth = 1600, maxHeight = 1600, quality = 0.82) {
+  return new Promise((resolve) => {
+    if (!file || !file.type || !file.type.startsWith("image/")) {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve({ dataUrl: e.target.result, file: file, isOptimized: false });
+      reader.onerror = () => resolve({ dataUrl: "", file: file, isOptimized: false });
+      reader.readAsDataURL(file);
+      return;
+    }
+
+    if (file.type === "image/svg+xml") {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve({ dataUrl: e.target.result, file: file, isOptimized: false });
+      reader.onerror = () => resolve({ dataUrl: "", file: file, isOptimized: false });
+      reader.readAsDataURL(file);
+      return;
+    }
+
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      let { width, height } = img;
+
+      if (width > maxWidth || height > maxHeight) {
+        if (width / height > maxWidth / maxHeight) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        } else {
+          width = Math.round((width * maxHeight) / height);
+          height = maxHeight;
+        }
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(img, 0, 0, width, height);
+
+      const mimeType = file.type === "image/png" ? "image/jpeg" : file.type;
+      const dataUrl = canvas.toDataURL(mimeType, quality);
+      resolve({ dataUrl, isOptimized: true, width, height });
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      const reader = new FileReader();
+      reader.onload = (e) => resolve({ dataUrl: e.target.result, file: file, isOptimized: false });
+      reader.onerror = () => resolve({ dataUrl: "", file: file, isOptimized: false });
+      reader.readAsDataURL(file);
+    };
+
+    img.src = objectUrl;
+  });
+}
+
+// Rehydrate local in-memory state with files from IndexedDB and Firestore Cloud Vault
+async function rehydrateStateFilesFromVault() {
+  if (!state) return;
+  const docs = state.documents || [];
+  for (const doc of docs) {
+    if (!doc.fileData || doc.fileData.startsWith("vault_file://")) {
+      const cached = await FileVault.getFile(doc.id);
+      if (cached && cached.fileData) {
+        doc.fileData = cached.fileData;
+      } else if (currentUser && window.Firebase && typeof window.Firebase.fetchVaultFile === "function") {
+        try {
+          const cloudData = await window.Firebase.fetchVaultFile(currentUser, doc.id);
+          if (cloudData) {
+            doc.fileData = cloudData;
+            await FileVault.saveFile(doc.id, cloudData, { fileName: doc.fileName, fileType: doc.fileType });
+          }
+        } catch (e) {
+          console.debug("Vault doc rehydrate notice:", e);
+        }
+      }
+    }
+  }
+
+  const bills = state.bills || [];
+  for (const bill of bills) {
+    if (!bill.pdfData || bill.pdfData.startsWith("vault_file://")) {
+      const cached = await FileVault.getFile(bill.id);
+      if (cached && cached.fileData) {
+        bill.pdfData = cached.fileData;
+      } else if (currentUser && window.Firebase && typeof window.Firebase.fetchVaultFile === "function") {
+        try {
+          const cloudData = await window.Firebase.fetchVaultFile(currentUser, bill.id);
+          if (cloudData) {
+            bill.pdfData = cloudData;
+            await FileVault.saveFile(bill.id, cloudData, { fileName: bill.pdfFileName, fileType: "application/pdf" });
+          }
+        } catch (e) {
+          console.debug("Vault bill rehydrate notice:", e);
+        }
+      }
+    }
+  }
+
+  const ids = state.importantIds || [];
+  for (const idItem of ids) {
+    if ((!idItem.fileData && !idItem.documentFile) || (idItem.fileData && idItem.fileData.startsWith("vault_file://")) || (idItem.documentFile && idItem.documentFile.startsWith("vault_file://"))) {
+      const cached = await FileVault.getFile(idItem.id);
+      if (cached && cached.fileData) {
+        idItem.fileData = cached.fileData;
+        idItem.documentFile = cached.fileData;
+      } else if (currentUser && window.Firebase && typeof window.Firebase.fetchVaultFile === "function") {
+        try {
+          const cloudData = await window.Firebase.fetchVaultFile(currentUser, idItem.id);
+          if (cloudData) {
+            idItem.fileData = cloudData;
+            idItem.documentFile = cloudData;
+            await FileVault.saveFile(idItem.id, cloudData, { fileName: idItem.fileName, fileType: "application/pdf" });
+          }
+        } catch (e) {
+          console.debug("Vault vehicle id rehydrate notice:", e);
+        }
+      }
+    }
+  }
+
+  const health = state.healthRecords || [];
+  for (const hr of health) {
+    if (!hr.fileData || hr.fileData.startsWith("vault_file://")) {
+      const cached = await FileVault.getFile(hr.id);
+      if (cached && cached.fileData) {
+        hr.fileData = cached.fileData;
+      } else if (currentUser && window.Firebase && typeof window.Firebase.fetchVaultFile === "function") {
+        try {
+          const cloudData = await window.Firebase.fetchVaultFile(currentUser, hr.id);
+          if (cloudData) {
+            hr.fileData = cloudData;
+            await FileVault.saveFile(hr.id, cloudData, { fileName: hr.title });
+          }
+        } catch (e) {
+          console.debug("Vault health rehydrate notice:", e);
+        }
+      }
+    }
+  }
+}
+
 /* ===== PERSISTENCE HELPERS WITH FIREBASE CLOUD SYNC ===== */
 function saveSessionData() {
   if (currentUser && usersDB[currentUser]) {
@@ -591,9 +835,43 @@ function loadSessionData() {
       state = sanitizeUserState(usersDB[currentUser].data || blankState(), currentUser);
       usersDB[currentUser].data = state;
 
-      const applyCloudSync = (cloudData) => {
+      const applyCloudSync = async (cloudData) => {
         if (cloudData && typeof cloudData === 'object' && Object.keys(cloudData).length > 0) {
+          // Preserve local fileData across cloud sync if cloud was pruned to empty string
+          if (Array.isArray(cloudData.documents) && Array.isArray(state.documents)) {
+            const localDocMap = new Map(state.documents.map(d => [d.id, d.fileData]));
+            cloudData.documents.forEach(cd => {
+              if ((!cd.fileData || cd.fileData === "") && localDocMap.has(cd.id)) {
+                const localData = localDocMap.get(cd.id);
+                if (localData) cd.fileData = localData;
+              }
+            });
+          }
+          if (Array.isArray(cloudData.bills) && Array.isArray(state.bills)) {
+            const localBillMap = new Map(state.bills.map(b => [b.id, b.pdfData]));
+            cloudData.bills.forEach(cb => {
+              if ((!cb.pdfData || cb.pdfData === "") && localBillMap.has(cb.id)) {
+                const localPdf = localBillMap.get(cb.id);
+                if (localPdf) cb.pdfData = localPdf;
+              }
+            });
+          }
+          if (Array.isArray(cloudData.importantIds) && Array.isArray(state.importantIds)) {
+            const localIdMap = new Map(state.importantIds.map(i => [i.id, i.documentFile || i.fileData]));
+            cloudData.importantIds.forEach(ci => {
+              if ((!ci.documentFile || ci.documentFile === "") && localIdMap.has(ci.id)) {
+                const localFile = localIdMap.get(ci.id);
+                if (localFile) {
+                  ci.documentFile = localFile;
+                  ci.fileData = localFile;
+                }
+              }
+            });
+          }
+
           state = sanitizeUserState({ ...blankState(), ...state, ...cloudData }, currentUser);
+          await rehydrateStateFilesFromVault();
+
           if (currentUser) {
             if (!usersDB[currentUser]) {
               usersDB[currentUser] = { name: (state.profile && state.profile.name) || currentUser.split("@")[0], data: state };
@@ -4370,9 +4648,27 @@ function clearEditBillPdf(e) {
   if (document.getElementById("editBillPdfPreview")) document.getElementById("editBillPdfPreview").style.display = "none";
 }
 
-function openBillPdfModal(billId) {
+async function openBillPdfModal(billId) {
   const bill = state.bills.find(b => b.id === billId);
-  if (!bill || !bill.pdfData) {
+  if (!bill) {
+    showToast("Bill not found.");
+    return;
+  }
+
+  if (!bill.pdfData || bill.pdfData.startsWith("vault_file://")) {
+    const cached = await FileVault.getFile(bill.id);
+    if (cached && cached.fileData) {
+      bill.pdfData = cached.fileData;
+    } else if (currentUser && window.Firebase && typeof window.Firebase.fetchVaultFile === "function") {
+      const cloudData = await window.Firebase.fetchVaultFile(currentUser, bill.id);
+      if (cloudData) {
+        bill.pdfData = cloudData;
+        await FileVault.saveFile(bill.id, cloudData, { fileName: bill.pdfFileName, fileType: "application/pdf" });
+      }
+    }
+  }
+
+  if (!bill.pdfData) {
     showToast("No PDF attached to this bill.");
     return;
   }
@@ -4382,6 +4678,7 @@ function openBillPdfModal(billId) {
   iframe.src = bill.pdfData;
   const dlBtn = document.getElementById("billPdfDownloadBtn");
   dlBtn.href = bill.pdfData;
+  dlBtn.target = "_blank";
   dlBtn.download = bill.pdfFileName || `${bill.name.replace(/\s+/g, '_')}_Bill.pdf`;
   document.getElementById("billPdfModal").style.display = "flex";
 }
@@ -4924,6 +5221,26 @@ const BillsAPI = {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
+
+    if (billData.pdfData) {
+      await FileVault.saveFile(billId, billData.pdfData, {
+        fileName: billData.pdfFileName || "bill_invoice.pdf",
+        fileType: "application/pdf"
+      });
+      if (window.Firebase && typeof window.Firebase.uploadFileToCloud === "function") {
+        try {
+          const cloudRes = await window.Firebase.uploadFileToCloud(currentUser, billData.pdfData, {
+            id: billId,
+            fileName: billData.pdfFileName || "bill_invoice.pdf",
+            fileType: "application/pdf"
+          });
+          if (cloudRes && cloudRes.success && cloudRes.url) {
+            newBill.pdfData = cloudRes.url;
+          }
+        } catch (e) {}
+      }
+    }
+
     state.bills.unshift(newBill);
     syncBillToFinance(newBill);
     saveSessionData();
@@ -4933,6 +5250,24 @@ const BillsAPI = {
     if (!currentUser || !usersDB[currentUser]) return { status: 401, error: "Unauthorized" };
     const bill = state.bills.find(b => b.id === id && b.userId === currentUser);
     if (!bill) return { status: 404, error: "Bill not found or unauthorized" };
+    if (updates.pdfData) {
+      await FileVault.saveFile(id, updates.pdfData, {
+        fileName: updates.pdfFileName || bill.pdfFileName || "bill_invoice.pdf",
+        fileType: "application/pdf"
+      });
+      if (window.Firebase && typeof window.Firebase.uploadFileToCloud === "function") {
+        try {
+          const cloudRes = await window.Firebase.uploadFileToCloud(currentUser, updates.pdfData, {
+            id: id,
+            fileName: updates.pdfFileName || bill.pdfFileName || "bill_invoice.pdf",
+            fileType: "application/pdf"
+          });
+          if (cloudRes && cloudRes.success && cloudRes.url) {
+            updates.pdfData = cloudRes.url;
+          }
+        } catch (e) {}
+      }
+    }
     Object.assign(bill, updates);
     bill.updatedAt = new Date().toISOString();
     syncBillToFinance(bill);
@@ -4958,9 +5293,14 @@ const BillsAPI = {
     if (!currentUser || !usersDB[currentUser]) return { status: 401, error: "Unauthorized" };
     const index = state.bills.findIndex(b => b.id === id && b.userId === currentUser);
     if (index === -1) return { status: 404, error: "Bill not found or unauthorized" };
+    const deletedBill = state.bills[index];
     state.bills.splice(index, 1);
     unlinkBillFromFinance(id);
     saveSessionData();
+    FileVault.deleteFile(id);
+    if (window.Firebase && typeof window.Firebase.deleteFileFromCloud === "function") {
+      window.Firebase.deleteFileFromCloud(currentUser, id, deletedBill ? deletedBill.pdfData : "");
+    }
     return { status: 200, success: true };
   }
 };
@@ -5489,12 +5829,44 @@ function openPreviewedDocInNewWindow(e) {
     return;
   }
   const doc = currentPreviewDoc;
-  const isImg = doc.fileType && doc.fileType.includes("image");
+  const fileName = doc.fileName || doc.name || doc.documentTitle || "";
+  const ext = fileName.split('.').pop().toLowerCase();
+  const mime = (doc.fileType || "").toLowerCase();
+  const fileDataStr = (doc.fileData || "");
+  const isPdf = mime.includes("pdf") || ext === "pdf" || fileDataStr.toLowerCase().includes("application/pdf") || fileDataStr.toLowerCase().includes(".pdf");
+  const isImg = mime.startsWith("image/") || ["png", "jpg", "jpeg", "webp", "gif", "svg", "bmp"].includes(ext) || fileDataStr.startsWith("data:image");
+
+  if (isPdf) {
+    let pdfUrl = doc.fileData;
+    if (pdfUrl.startsWith("data:")) {
+      try {
+        const base64Index = pdfUrl.indexOf(";base64,");
+        const b64 = base64Index !== -1 ? pdfUrl.substring(base64Index + 8) : (pdfUrl.includes(",") ? pdfUrl.split(",")[1] : pdfUrl);
+        const binary = atob(b64);
+        const len = binary.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        const blob = new Blob([bytes], { type: "application/pdf" });
+        pdfUrl = URL.createObjectURL(blob);
+      } catch (err) {
+        console.warn("PDF Blob creation notice:", err);
+      }
+    }
+    const win = window.open(pdfUrl, '_blank');
+    if (!win) {
+      showToast("Please allow popups to open full PDF view.");
+    }
+    return;
+  }
+
   const win = window.open('', '_blank');
   if (!win) {
     showToast("Please allow popups to open full view.");
     return;
   }
+
   if (isImg) {
     win.document.write(`
       <!DOCTYPE html>
@@ -5502,8 +5874,8 @@ function openPreviewedDocInNewWindow(e) {
       <head>
         <title>${escapeHtml(doc.name || 'Document View')}</title>
         <style>
-          body { margin: 0; background: #0f172a; display: flex; justify-content: center; align-items: flex-start; padding: 20px; }
-          img { max-width: 100%; height: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.6); border-radius: 6px; background: #fff; }
+          body { margin: 0; background: #0b1120; display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 20px; box-sizing: border-box; }
+          img { max-width: 100%; max-height: 96vh; height: auto; width: auto; object-fit: contain; box-shadow: 0 10px 40px rgba(0,0,0,0.7); border-radius: 8px; background: #fff; }
         </style>
       </head>
       <body>
@@ -5522,7 +5894,7 @@ function viewDocuments() {
 
   // Query database enforcing authenticated user ID and selected category (Phase 2, 3, 5, 8)
   const filteredDocs = getUserDocuments(currentUser, activeDocCategory);
-  const totalUploaded = filteredDocs.filter(d => d.fileData).length;
+  const totalUploaded = filteredDocs.filter(d => d.fileData || d.fileUrl || d.fileName).length;
 
   return `
   <div class="stat-cards-row">
@@ -5613,11 +5985,9 @@ function viewDocuments() {
                 View
               </button>
 
-              ${d.fileData ? `
-                <a href="${d.fileData}" download="${escapeHtml(d.fileName || d.name || d.documentTitle)}" class="pwd-card-btn" style="background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; padding: 7px 14px; border-radius: 8px; font-weight: 700; font-size: 12.5px; cursor: pointer; display: inline-flex; align-items: center; text-decoration: none; white-space: nowrap;" title="Download File">
-                  Download
-                </a>
-              ` : ''}
+              <button type="button" onclick="downloadDocument(${d.id})" class="pwd-card-btn" style="background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; padding: 7px 14px; border-radius: 8px; font-weight: 700; font-size: 12.5px; cursor: pointer; display: inline-flex; align-items: center; white-space: nowrap;" title="Download File">
+                Download
+              </button>
 
               <button type="button" onclick="deleteDocument(${d.id})" class="pwd-btn-danger" style="background: #fef2f2; color: #dc2626; border: 1px solid #fee2e2; padding: 7px 14px; border-radius: 8px; font-weight: 700; font-size: 12.5px; cursor: pointer; white-space: nowrap;" title="Delete Document">
                 Delete
@@ -5699,12 +6069,19 @@ function viewDocuments() {
   </div>`;
 }
 
-// High-Definition Canvas PDF Rendering Engine (Mozilla PDF.js)
+// High-Definition Canvas PDF Rendering Engine with Full View & Interactive Zoom
+let currentPdfDoc = null;
+let currentPdfDataUri = "";
+let currentPdfFitMode = "fit-width";
+let currentPdfScaleVal = 1.0;
+
 async function renderPdfDocumentToContainer(dataUri, container) {
+  currentPdfDataUri = dataUri;
+  currentPdfFitMode = "fit-width";
   container.innerHTML = `
     <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; padding:60px 20px; color:#94a3b8; width:100%; min-height:360px;">
       <div style="width:38px; height:38px; border:3px solid #334155; border-top-color:#6366f1; border-radius:50%; animation:docSpin 0.8s linear infinite;"></div>
-      <div style="margin-top:14px; font-weight:600; font-size:13.5px; color:#cbd5e1;">Rendering PDF pages in high definition...</div>
+      <div style="margin-top:14px; font-weight:600; font-size:13.5px; color:#cbd5e1;">Rendering document in full definition...</div>
     </div>
   `;
 
@@ -5721,61 +6098,160 @@ async function renderPdfDocumentToContainer(dataUri, container) {
   }
 
   try {
-    const bytes = dataUriToUint8Array(dataUri);
     if (window.pdfjsLib) {
       window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-      const loadingTask = window.pdfjsLib.getDocument({ data: bytes });
-      const pdf = await loadingTask.promise;
-
-      container.innerHTML = `
-        <div id="pdfCanvasList" style="width:100%; max-height:74vh; overflow-y:auto; overflow-x:hidden; background:#0f172a; padding:16px; border-radius:12px; box-sizing:border-box; display:flex; flex-direction:column; align-items:center; gap:16px;"></div>
-      `;
-      const list = document.getElementById("pdfCanvasList");
-
-      for (let num = 1; num <= pdf.numPages; num++) {
-        const page = await pdf.getPage(num);
-        const initialViewport = page.getViewport({ scale: 1.0 });
-        const targetWidth = Math.min(window.innerWidth - 64, 820);
-        const scale = Math.max(targetWidth / initialViewport.width, 1.25);
-        const viewport = page.getViewport({ scale: scale });
-
-        const pageWrap = document.createElement("div");
-        pageWrap.style.cssText = "position:relative; width:100%; max-width:820px; background:#ffffff; border-radius:8px; box-shadow:0 8px 30px rgba(0,0,0,0.5); overflow:hidden;";
-
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        canvas.style.cssText = "width:100%; height:auto; display:block;";
-        pageWrap.appendChild(canvas);
-
-        const badge = document.createElement("div");
-        badge.textContent = `Page ${num} / ${pdf.numPages}`;
-        badge.style.cssText = "position:absolute; bottom:10px; right:12px; background:rgba(15,23,42,0.85); backdrop-filter:blur(4px); color:#ffffff; font-size:11px; font-weight:700; padding:3px 9px; border-radius:6px; pointer-events:none;";
-        pageWrap.appendChild(badge);
-
-        list.appendChild(pageWrap);
-
-        await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+      if (window.pdfjsLib.VerbosityLevel) {
+        window.pdfjsLib.verbosity = window.pdfjsLib.VerbosityLevel.ERRORS;
+      } else {
+        window.pdfjsLib.verbosity = 0;
       }
+    }
+    let loadingTask;
+    if (dataUri.startsWith("http://") || dataUri.startsWith("https://")) {
+      loadingTask = window.pdfjsLib.getDocument({ url: dataUri });
+    } else {
+      const bytes = dataUriToUint8Array(dataUri);
+      if (window.pdfjsLib) {
+        loadingTask = window.pdfjsLib.getDocument({ data: bytes });
+      }
+    }
+
+    if (loadingTask) {
+      currentPdfDoc = await loadingTask.promise;
+      await renderPdfPagesInViewer(container);
     } else {
       container.innerHTML = `
         <iframe src="${dataUri}" style="width:100%; height:75vh; border:none; border-radius:12px; background:#525659;"></iframe>
       `;
     }
   } catch (err) {
+    console.warn("PDF.js render notice, fallback to iframe:", err);
     container.innerHTML = `
       <iframe src="${dataUri}" style="width:100%; height:75vh; border:none; border-radius:12px; background:#525659;"></iframe>
     `;
   }
 }
 
-function previewDocument(id) {
+let isPdfRendering = false;
+let pendingPdfRender = false;
+
+async function renderPdfPagesInViewer(containerOverride) {
+  const container = containerOverride || document.getElementById("docModalBody");
+  if (!container || !currentPdfDoc) return;
+
+  if (isPdfRendering) {
+    pendingPdfRender = true;
+    return;
+  }
+  isPdfRendering = true;
+  pendingPdfRender = false;
+
+  const pdf = currentPdfDoc;
+  container.innerHTML = `
+    <div id="pdfCanvasList" style="width:100%; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; gap:20px; box-sizing:border-box;"></div>
+  `;
+  const list = document.getElementById("pdfCanvasList");
+  if (!list) {
+    isPdfRendering = false;
+    return;
+  }
+
+  try {
+    const clientW = container.clientWidth || (window.innerWidth > 1250 ? 1150 : Math.round(window.innerWidth * 0.92));
+    const availWidth = Math.max(300, clientW - 40);
+    const availHeight = Math.max(340, Math.floor(window.innerHeight * 0.70) - 24);
+
+    for (let num = 1; num <= pdf.numPages; num++) {
+      const page = await pdf.getPage(num);
+      const baseViewport = page.getViewport({ scale: 1.0 });
+
+      let scale = 1.0;
+      if (currentPdfFitMode === "fit-width" || currentPdfFitMode === "fit-page") {
+        scale = Math.max(0.4, availWidth / baseViewport.width);
+      } else if (typeof currentPdfFitMode === "number") {
+        scale = currentPdfFitMode;
+      } else {
+        scale = currentPdfScaleVal;
+      }
+
+      currentPdfScaleVal = scale;
+
+      const viewport = page.getViewport({ scale: scale });
+
+      const pageWrap = document.createElement("div");
+      pageWrap.style.cssText = `position:relative; width:${Math.round(viewport.width)}px; max-width:100%; background:#ffffff; border-radius:8px; box-shadow:0 12px 40px rgba(0,0,0,0.6); overflow:hidden; margin:0 auto;`;
+
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      canvas.style.cssText = `width:${Math.round(viewport.width)}px; max-width:100%; height:auto; display:block;`;
+      pageWrap.appendChild(canvas);
+
+      if (pdf.numPages > 1) {
+        const badge = document.createElement("div");
+        badge.textContent = `Page ${num} / ${pdf.numPages}`;
+        badge.style.cssText = "position:absolute; bottom:10px; right:12px; background:rgba(15,23,42,0.85); backdrop-filter:blur(4px); color:#ffffff; font-size:11px; font-weight:700; padding:3px 9px; border-radius:6px; pointer-events:none;";
+        pageWrap.appendChild(badge);
+      }
+
+      list.appendChild(pageWrap);
+
+      await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+    }
+
+    // Update PDF toolbar zoom label
+    const label = document.getElementById("pdfZoomLabel");
+    if (label) {
+      if (currentPdfFitMode === "fit-width" || currentPdfFitMode === "fit-page") {
+        label.textContent = "Fit Width";
+      } else {
+        label.textContent = `${Math.round(currentPdfScaleVal * 100)}%`;
+      }
+    }
+  } catch (err) {
+    console.warn("PDF page render error:", err);
+  } finally {
+    isPdfRendering = false;
+    if (pendingPdfRender) {
+      pendingPdfRender = false;
+      renderPdfPagesInViewer(containerOverride);
+    }
+  }
+}
+
+function zoomPdf(delta) {
+  if (!currentPdfDoc) return;
+  currentPdfFitMode = Math.max(0.25, Math.min(3.5, currentPdfScaleVal * delta));
+  renderPdfPagesInViewer();
+}
+
+function setPdfFitMode(mode) {
+  if (!currentPdfDoc) return;
+  currentPdfFitMode = mode;
+  renderPdfPagesInViewer();
+}
+
+async function previewDocument(id) {
   if (!currentUser) return;
   const doc = (state.documents || []).find(d => d.id === id && (d.userId || currentUser) === currentUser);
   if (!doc) {
     showToast("Unauthorized or document not found.");
     return;
+  }
+
+  // Auto-resolve / rehydrate file if missing or stored as a vault reference
+  if (!doc.fileData || doc.fileData.startsWith("vault_file://")) {
+    const cached = await FileVault.getFile(doc.id);
+    if (cached && cached.fileData) {
+      doc.fileData = cached.fileData;
+    } else if (currentUser && window.Firebase && typeof window.Firebase.fetchVaultFile === "function") {
+      const cloudData = await window.Firebase.fetchVaultFile(currentUser, doc.id);
+      if (cloudData) {
+        doc.fileData = cloudData;
+        await FileVault.saveFile(doc.id, cloudData, { fileName: doc.fileName, fileType: doc.fileType });
+      }
+    }
   }
 
   currentPreviewDoc = doc;
@@ -5792,14 +6268,16 @@ function previewDocument(id) {
   const footerMeta = document.getElementById("docModalFooterMeta");
 
   if (!modal) return;
+  modal.style.display = "flex";
 
   const fileName = doc.fileName || doc.name || doc.documentTitle || "";
   const ext = fileName.split('.').pop().toLowerCase();
   const mime = (doc.fileType || "").toLowerCase();
-  const dataPrefix = (doc.fileData || "").substring(0, 80).toLowerCase();
+  const fileDataStr = (doc.fileData || "");
+  const dataPrefix = fileDataStr.substring(0, 100).toLowerCase();
 
-  const isPdf = mime.includes("pdf") || ext === "pdf" || dataPrefix.includes("application/pdf");
-  const isImg = mime.startsWith("image/") || ["png", "jpg", "jpeg", "webp", "gif", "svg", "bmp"].includes(ext) || dataPrefix.includes("image/");
+  const isPdf = mime.includes("pdf") || ext === "pdf" || dataPrefix.includes("application/pdf") || fileDataStr.toLowerCase().includes(".pdf");
+  const isImg = mime.startsWith("image/") || ["png", "jpg", "jpeg", "webp", "gif", "svg", "bmp"].includes(ext) || dataPrefix.includes("image/") || ["png", "jpg", "jpeg", "webp"].some(e => fileDataStr.toLowerCase().includes("." + e));
   const isWord = ["doc", "docx"].includes(ext) || mime.includes("word") || mime.includes("officedocument.wordprocessingml");
   const isPpt = ["ppt", "pptx"].includes(ext) || mime.includes("presentation") || mime.includes("powerpoint");
   const isExcel = ["xls", "xlsx", "csv"].includes(ext) || mime.includes("spreadsheet") || mime.includes("excel") || mime.includes("csv");
@@ -5847,25 +6325,31 @@ function previewDocument(id) {
   if (controls) {
     if (isImg) {
       controls.innerHTML = `
-        <div style="display: flex; align-items: center; gap: 5px; background: #f8fafc; padding: 3px 8px; border-radius: 8px; border: 1px solid var(--border-color);">
+        <div style="display: flex; align-items: center; gap: 5px; background: #f8fafc; padding: 3px 8px; border-radius: 8px; border: 1px solid var(--border-color); flex-wrap: wrap;">
           <button type="button" class="doc-zoom-btn" onclick="zoomDocImg(0.8)" title="Zoom Out">🔍 -</button>
           <span id="docZoomLabel" style="font-size: 12px; font-weight: 700; color: #1e293b; min-width: 44px; text-align: center;">100%</span>
           <button type="button" class="doc-zoom-btn" onclick="zoomDocImg(1.25)" title="Zoom In">🔍 +</button>
-          <button type="button" class="doc-zoom-btn" onclick="resetDocImgZoom()" title="Reset to standard width">Fit</button>
           <button type="button" class="doc-zoom-btn" onclick="rotateDocImg()" title="Rotate 90 degrees">↺ 90°</button>
+          <button type="button" class="doc-zoom-btn" onclick="openPreviewedDocInNewWindow()" style="background: #e0e7ff; color: #4338ca; border-color: #c7d2fe; font-weight: 700;" title="Open complete image in new tab">↗ Full View</button>
         </div>
       `;
     } else if (isPdf) {
       controls.innerHTML = `
-        <span style="font-size: 11.5px; font-weight: 700; color: #4338ca; background: #eef2ff; border: 1px solid #c7d2fe; padding: 5px 10px; border-radius: 6px;">
-          📄 PDF Document View
-        </span>
+        <div style="display: flex; align-items: center; gap: 6px; background: #f8fafc; padding: 3px 8px; border-radius: 8px; border: 1px solid var(--border-color); flex-wrap: wrap;">
+          <button type="button" class="doc-zoom-btn" onclick="zoomPdf(0.8)" title="Zoom Out">🔍 -</button>
+          <span id="pdfZoomLabel" style="font-size: 12px; font-weight: 700; color: #1e293b; min-width: 58px; text-align: center;">Fit Width</span>
+          <button type="button" class="doc-zoom-btn" onclick="zoomPdf(1.25)" title="Zoom In">🔍 +</button>
+          <button type="button" class="doc-zoom-btn" onclick="openPreviewedDocInNewWindow()" style="background: #e0e7ff; color: #4338ca; border-color: #c7d2fe; font-weight: 700;" title="Open complete document in new tab">↗ Full View</button>
+        </div>
       `;
     } else if (isWord || isPpt || isExcel) {
       controls.innerHTML = `
-        <span style="font-size: 11.5px; font-weight: 700; color: #047857; background: #ecfdf5; border: 1px solid #a7f3d0; padding: 5px 10px; border-radius: 6px;">
-          ✓ Verified Vault Asset
-        </span>
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <span style="font-size: 11.5px; font-weight: 700; color: #047857; background: #ecfdf5; border: 1px solid #a7f3d0; padding: 5px 10px; border-radius: 6px;">
+            ✓ Verified Vault Asset
+          </span>
+          <button type="button" class="doc-zoom-btn" onclick="openPreviewedDocInNewWindow()" style="background: #e0e7ff; color: #4338ca; border-color: #c7d2fe; font-weight: 700;" title="Open / download in new tab">↗ Open</button>
+        </div>
       `;
     } else {
       controls.innerHTML = "";
@@ -5877,6 +6361,7 @@ function previewDocument(id) {
     if (doc.fileData) {
       dlBtn.href = doc.fileData;
       dlBtn.download = doc.fileName || doc.name || doc.documentTitle;
+      dlBtn.target = "_blank";
       dlBtn.style.display = "inline-flex";
     } else {
       dlBtn.style.display = "none";
@@ -5887,8 +6372,8 @@ function previewDocument(id) {
   if (doc.fileData) {
     if (isImg) {
       modalBody.innerHTML = `
-        <div id="docImgViewport" style="overflow: auto; max-height: 72vh; width: 100%; display: flex; align-items: flex-start; justify-content: center; background: #0f172a; padding: 24px; box-sizing: border-box; border-radius: 12px;">
-          <img id="docPreviewImg" src="${doc.fileData}" alt="${escapeHtml(doc.name || doc.documentTitle)}" style="max-width: 100%; height: auto; transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1); transform-origin: top center; box-shadow: 0 15px 40px rgba(0,0,0,0.6); border-radius: 6px; background: #ffffff;" />
+        <div id="docImgViewport" style="overflow: auto; max-height: calc(96vh - 140px); width: 100%; display: flex; align-items: flex-start; justify-content: center; background: #0f172a; padding: 20px; box-sizing: border-box; border-radius: 12px;">
+          <img id="docPreviewImg" src="${doc.fileData}" crossorigin="anonymous" alt="${escapeHtml(doc.name || doc.documentTitle)}" style="width: 100%; max-width: 100%; height: auto; transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1); transform-origin: top center; box-shadow: 0 15px 40px rgba(0,0,0,0.6); border-radius: 6px; background: #ffffff;" />
         </div>
       `;
     } else if (isPdf) {
@@ -5919,7 +6404,7 @@ function previewDocument(id) {
               🔒 <b>Encrypted Vault Asset:</b> This ${brandExt} document is encrypted and stored safely in your cloud vault. Ready to download and view or edit with Microsoft Office, Google Workspace, or any document reader.
             </div>
             <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
-              <a href="${doc.fileData}" download="${escapeHtml(doc.fileName || doc.name || 'document')}" class="doc-modal-dl-btn" style="background: linear-gradient(135deg, ${brandColor}, #0f172a); color: #fff; padding: 11px 24px; border-radius: 10px; font-weight: 700; font-size: 13.5px; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; box-shadow: 0 4px 14px ${brandColor}40;">
+              <a href="${doc.fileData}" download="${escapeHtml(doc.fileName || doc.name || 'document')}" target="_blank" class="doc-modal-dl-btn" style="background: linear-gradient(135deg, ${brandColor}, #0f172a); color: #fff; padding: 11px 24px; border-radius: 10px; font-weight: 700; font-size: 13.5px; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; box-shadow: 0 4px 14px ${brandColor}40;">
                 ⬇️ Download & Open Document
               </a>
             </div>
@@ -5976,6 +6461,9 @@ function closeDocModal() {
   const modal = document.getElementById("docPreviewModal");
   if (modal) modal.style.display = "none";
   currentPreviewDoc = null;
+  currentPdfDoc = null;
+  const body = document.getElementById("docModalBody");
+  if (body) body.innerHTML = "";
 }
 
 function deleteDocument(id) {
@@ -5985,10 +6473,54 @@ function deleteDocument(id) {
     showToast("Unauthorized or document not found.");
     return;
   }
+  const deletedDoc = state.documents[docIndex];
   state.documents.splice(docIndex, 1);
   saveSessionData();
   renderMain();
   showToast("Document deleted from vault");
+
+  FileVault.deleteFile(id);
+  if (window.Firebase && typeof window.Firebase.deleteFileFromCloud === "function") {
+    window.Firebase.deleteFileFromCloud(currentUser, id, deletedDoc ? deletedDoc.fileData : "");
+  }
+}
+
+async function downloadDocument(id) {
+  if (!currentUser) return;
+  const doc = (state.documents || []).find(d => d.id === id && (d.userId || currentUser) === currentUser);
+  if (!doc) {
+    showToast("Document not found.");
+    return;
+  }
+
+  let fileData = doc.fileData;
+  if (!fileData || fileData.startsWith("vault_file://")) {
+    showToast("Retrieving file from cloud vault...");
+    const cached = await FileVault.getFile(doc.id);
+    if (cached && cached.fileData) {
+      fileData = cached.fileData;
+      doc.fileData = fileData;
+    } else if (currentUser && window.Firebase && typeof window.Firebase.fetchVaultFile === "function") {
+      fileData = await window.Firebase.fetchVaultFile(currentUser, doc.id);
+      if (fileData) {
+        doc.fileData = fileData;
+        await FileVault.saveFile(doc.id, fileData, { fileName: doc.fileName, fileType: doc.fileType });
+      }
+    }
+  }
+
+  if (!fileData || fileData.startsWith("vault_file://")) {
+    showToast("No physical file found for this document.");
+    return;
+  }
+
+  const a = document.createElement("a");
+  a.href = fileData;
+  a.download = doc.fileName || doc.name || doc.documentTitle || "document";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  showToast("Download started");
 }
 
 /* ===== 6. APPOINTMENTS VIEW ===== */
@@ -6778,14 +7310,27 @@ window.closeTxModal = closeTxModal;
 window.saveTxForm = saveTxForm;
 window.deleteIncome = deleteIncome;
 window.previewDocument = previewDocument;
+window.downloadDocument = downloadDocument;
 window.closeDocModal = closeDocModal;
 window.deleteDocument = deleteDocument;
 window.switchDocCategory = switchDocCategory;
 window.zoomDocImg = zoomDocImg;
 window.resetDocImgZoom = resetDocImgZoom;
 window.rotateDocImg = rotateDocImg;
+window.zoomPdf = zoomPdf;
+window.setPdfFitMode = setPdfFitMode;
 window.printPreviewedDocument = printPreviewedDocument;
 window.openPreviewedDocInNewWindow = openPreviewedDocInNewWindow;
+
+window.addEventListener("resize", () => {
+  const modal = document.getElementById("docPreviewModal");
+  if (modal && modal.style.display !== "none" && currentPdfDoc) {
+    if (window._pdfResizeTimer) clearTimeout(window._pdfResizeTimer);
+    window._pdfResizeTimer = setTimeout(() => {
+      renderPdfPagesInViewer();
+    }, 200);
+  }
+});
 
 function attachHandlers() {
   const $ = id => document.getElementById(id);
@@ -6944,7 +7489,7 @@ function attachHandlers() {
   }
 
   if ($("docAddBtn")) {
-    $("docAddBtn").addEventListener("click", () => {
+    $("docAddBtn").addEventListener("click", async () => {
       const name = $("docNameInput") ? $("docNameInput").value.trim() : "";
       if (!name) {
         showToast("Please enter a document title");
@@ -6980,7 +7525,7 @@ function attachHandlers() {
         saveSessionData();
         activeDocCategory = category; // Dynamically switch to active category view
         renderMain();
-        showToast(`Document "${name}" (${docType}) saved under ${category}!`);
+        showToast(`Document "${name}" (${docType}) saved to secure vault!`);
         selectedDocFile = null;
         if ($("docNameInput")) $("docNameInput").value = "";
         if ($("docTypeSelect")) $("docTypeSelect").value = "";
@@ -6990,12 +7535,39 @@ function attachHandlers() {
       };
 
       if (selectedDocFile) {
-        const reader = new FileReader();
-        reader.onload = function(evt) {
-          newDoc.fileData = evt.target.result;
+        showToast("Saving & syncing document to secure cloud vault...");
+        try {
+          const optResult = await optimizeImageForVault(selectedDocFile);
+          const dataUrl = optResult.dataUrl;
+          newDoc.fileData = dataUrl;
+
+          // 1. Instantly cache in local IndexedDB FileVault so it never gets lost across tab closures or offline
+          await FileVault.saveFile(newDoc.id, dataUrl, {
+            fileName: newDoc.fileName,
+            fileType: newDoc.fileType
+          });
+
+          // 2. Upload to Firebase Cloud Storage or Firestore Subcollection for multi-device sync
+          if (window.Firebase && typeof window.Firebase.uploadFileToCloud === "function") {
+            try {
+              const cloudRes = await window.Firebase.uploadFileToCloud(currentUser, dataUrl, {
+                id: newDoc.id,
+                fileName: newDoc.fileName,
+                fileType: newDoc.fileType
+              });
+              if (cloudRes && cloudRes.success && cloudRes.url) {
+                newDoc.fileData = cloudRes.url;
+              }
+            } catch (cloudErr) {
+              console.warn("Cloud upload notice (local vault preserved):", cloudErr);
+            }
+          }
+
           saveDocAndFinish();
-        };
-        reader.readAsDataURL(selectedDocFile);
+        } catch (err) {
+          console.warn("Error processing document attachment:", err);
+          saveDocAndFinish();
+        }
       } else {
         saveDocAndFinish();
       }
@@ -7361,6 +7933,33 @@ async function enterApp(email, name) {
     try {
       const cloudData = await window.Firebase.fetchUserDataFromCloud(normEmail);
       if (cloudData && typeof cloudData === "object" && Object.keys(cloudData).length > 0) {
+        // Preserve any existing local file attachments if cloud was pruned
+        if (Array.isArray(cloudData.documents) && Array.isArray(state.documents)) {
+          const localMap = new Map(state.documents.map(d => [d.id, d.fileData]));
+          cloudData.documents.forEach(cd => {
+            if ((!cd.fileData || cd.fileData === "") && localMap.has(cd.id)) {
+              cd.fileData = localMap.get(cd.id);
+            }
+          });
+        }
+        if (Array.isArray(cloudData.bills) && Array.isArray(state.bills)) {
+          const localMap = new Map(state.bills.map(b => [b.id, b.pdfData]));
+          cloudData.bills.forEach(cb => {
+            if ((!cb.pdfData || cb.pdfData === "") && localMap.has(cb.id)) {
+              cb.pdfData = localMap.get(cb.id);
+            }
+          });
+        }
+        if (Array.isArray(cloudData.importantIds) && Array.isArray(state.importantIds)) {
+          const localMap = new Map(state.importantIds.map(i => [i.id, i.documentFile || i.fileData]));
+          cloudData.importantIds.forEach(ci => {
+            if ((!ci.documentFile || ci.documentFile === "") && localMap.has(ci.id)) {
+              ci.documentFile = localMap.get(ci.id);
+              ci.fileData = localMap.get(ci.id);
+            }
+          });
+        }
+
         usersDB[normEmail].data = sanitizeUserState({ ...blankState(), ...cloudData }, normEmail);
         if (cloudData.profile) {
           if (cloudData.profile.name) usersDB[normEmail].name = cloudData.profile.name;
@@ -7375,6 +7974,7 @@ async function enterApp(email, name) {
   }
 
   state = sanitizeUserState(usersDB[normEmail].data || blankState(), normEmail);
+  await rehydrateStateFilesFromVault();
   usersDB[normEmail].data = state;
   if (!state.startMonth) {
     state.startMonth = getActualCurrentMonthKey();
@@ -7394,9 +7994,37 @@ async function enterApp(email, name) {
 
   // 2. Attach real-time subscription for live multi-device streaming from Firebase Firestore
   if (window.Firebase && typeof window.Firebase.subscribeToCloudData === "function") {
-    window.Firebase.subscribeToCloudData(normEmail, cloudData => {
+    window.Firebase.subscribeToCloudData(normEmail, async cloudData => {
       if (cloudData && typeof cloudData === "object" && Object.keys(cloudData).length > 0) {
+        // Preserve any existing local file attachments if cloud was pruned
+        if (Array.isArray(cloudData.documents) && Array.isArray(state.documents)) {
+          const localMap = new Map(state.documents.map(d => [d.id, d.fileData]));
+          cloudData.documents.forEach(cd => {
+            if ((!cd.fileData || cd.fileData === "") && localMap.has(cd.id)) {
+              cd.fileData = localMap.get(cd.id);
+            }
+          });
+        }
+        if (Array.isArray(cloudData.bills) && Array.isArray(state.bills)) {
+          const localMap = new Map(state.bills.map(b => [b.id, b.pdfData]));
+          cloudData.bills.forEach(cb => {
+            if ((!cb.pdfData || cb.pdfData === "") && localMap.has(cb.id)) {
+              cb.pdfData = localMap.get(cb.id);
+            }
+          });
+        }
+        if (Array.isArray(cloudData.importantIds) && Array.isArray(state.importantIds)) {
+          const localMap = new Map(state.importantIds.map(i => [i.id, i.documentFile || i.fileData]));
+          cloudData.importantIds.forEach(ci => {
+            if ((!ci.documentFile || ci.documentFile === "") && localMap.has(ci.id)) {
+              ci.documentFile = localMap.get(ci.id);
+              ci.fileData = localMap.get(ci.id);
+            }
+          });
+        }
+
         state = sanitizeUserState({ ...blankState(), ...state, ...cloudData }, normEmail);
+        await rehydrateStateFilesFromVault();
         
         // Ensure usersDB record exists safely
         if (!usersDB[normEmail]) {
@@ -8467,7 +9095,7 @@ function viewHealthAndWellness() {
                   <div class="ur-sub">${escapeHtml(r.type)} • ${escapeHtml(r.date)}</div>
                 </div>
               </div>
-              ${r.fileData ? `<button class="action-btn" onclick="openDocModalFromHealth('${escapeHtml(r.title)}', '${r.fileData}')">View File</button>` : ''}
+              ${r.fileData ? `<button class="action-btn" onclick="openDocModalFromHealth('${escapeHtml(r.title)}', '${r.fileData}', ${r.id})">View File</button>` : ''}
             </div>
           `).join("")}
           ${(state.healthRecords || []).length === 0 ? `<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 13px;">No health records added yet.</div>` : ''}
@@ -8514,7 +9142,7 @@ function renderHealthRecordsSection() {
             </div>
           </div>
           <div style="display: flex; gap: 8px; align-items: center;">
-            ${r.fileData ? `<button class="action-btn" onclick="openDocModalFromHealth('${escapeHtml(r.title)}', '${r.fileData}')">View Attachment</button>` : ''}
+            ${r.fileData ? `<button class="action-btn" onclick="openDocModalFromHealth('${escapeHtml(r.title)}', '${r.fileData}', ${r.id})">View Attachment</button>` : ''}
             <button class="action-btn danger-btn" onclick="deleteHealthRecord(${r.id})">Delete</button>
           </div>
         </div>
@@ -8593,42 +9221,94 @@ function addHealthRecord() {
   };
 
   if (file) {
-    if (file.size > 800 * 1024) {
-      showToast("⚠️ Health attachment exceeds 800 KB limit for cloud sync. Please select a smaller file.");
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = e => { newRec.fileData = e.target.result; finishSave(); };
-    reader.readAsDataURL(file);
+    showToast("Processing & optimizing health attachment...");
+    optimizeImageForVault(file).then(async (optResult) => {
+      const dataUrl = optResult.dataUrl;
+      newRec.fileData = dataUrl;
+
+      await FileVault.saveFile(newRec.id, dataUrl, {
+        fileName: file.name,
+        fileType: file.type || "application/octet-stream"
+      });
+
+      if (window.Firebase && typeof window.Firebase.uploadFileToCloud === "function") {
+        try {
+          const cloudRes = await window.Firebase.uploadFileToCloud(currentUser, dataUrl, {
+            id: newRec.id,
+            fileName: file.name,
+            fileType: file.type || "application/octet-stream"
+          });
+          if (cloudRes && cloudRes.success && cloudRes.url) {
+            newRec.fileData = cloudRes.url;
+          }
+        } catch (e) {}
+      }
+
+      finishSave();
+    }).catch(() => finishSave());
   } else {
     finishSave();
   }
 }
 
 function deleteHealthRecord(id) {
+  const rec = (state.healthRecords || []).find(r => r.id === id);
   state.healthRecords = (state.healthRecords || []).filter(r => r.id !== id);
   saveSessionData();
   renderMain();
   showToast("Health record deleted");
+
+  FileVault.deleteFile(id);
+  if (window.Firebase && typeof window.Firebase.deleteFileFromCloud === "function") {
+    window.Firebase.deleteFileFromCloud(currentUser, id, rec ? rec.fileData : "");
+  }
 }
 
-function openDocModalFromHealth(title, dataUrl) {
+async function openDocModalFromHealth(title, dataUrl, recordId = null) {
   const modal = document.getElementById("docPreviewModal");
   const body = document.getElementById("docModalBody");
   const titleEl = document.getElementById("docModalTitle");
   const dlBtn = document.getElementById("docModalDownloadBtn");
   if (!modal || !body) return;
+
+  let finalData = dataUrl;
+  if (!finalData || finalData.startsWith("vault_file://")) {
+    const fileId = recordId || (finalData ? finalData.replace("vault_file://", "") : "");
+    if (fileId) {
+      const cached = await FileVault.getFile(fileId);
+      if (cached && cached.fileData) {
+        finalData = cached.fileData;
+      } else if (currentUser && window.Firebase && typeof window.Firebase.fetchVaultFile === "function") {
+        showToast("Retrieving health attachment from cloud vault...");
+        finalData = await window.Firebase.fetchVaultFile(currentUser, fileId);
+        if (finalData) {
+          await FileVault.saveFile(fileId, finalData, { fileName: title });
+        }
+      }
+    }
+  }
+
+  if (!finalData || finalData.startsWith("vault_file://")) {
+    showToast("No attachment file found for this record.");
+    return;
+  }
+
   titleEl.textContent = title;
-  dlBtn.href = dataUrl;
-  if (dataUrl.startsWith("data:image")) {
-    body.innerHTML = `<div style="display:flex; justify-content:center; align-items:center; padding:20px; width:100%;"><img src="${dataUrl}" style="max-width: 100%; max-height:70vh; border-radius: 8px; object-fit:contain;"></div>`;
-  } else if (dataUrl.startsWith("data:application/pdf") || dataUrl.includes(";base64,JVBERi")) {
-    renderPdfDocumentToContainer(dataUrl, body);
+  dlBtn.href = finalData;
+  dlBtn.target = "_blank";
+  const isImage = finalData.startsWith("data:image") || finalData.includes(".png") || finalData.includes(".jpg") || finalData.includes(".jpeg") || finalData.includes(".webp") || finalData.includes("image");
+  const isPdf = finalData.startsWith("data:application/pdf") || finalData.includes(";base64,JVBERi") || finalData.includes(".pdf");
+  if (isImage) {
+    body.innerHTML = `<div style="display:flex; justify-content:center; align-items:center; padding:20px; width:100%;"><img src="${finalData}" crossorigin="anonymous" style="max-width: 100%; max-height:70vh; border-radius: 8px; object-fit:contain;"></div>`;
+  } else if (isPdf) {
+    renderPdfDocumentToContainer(finalData, body);
   } else {
     body.innerHTML = `<div style="padding: 40px 20px; text-align: center; color:#cbd5e1; font-size:14px;">Attachment available for download using the button below.</div>`;
   }
   modal.style.display = "flex";
 }
+window.openDocModalFromHealth = openDocModalFromHealth;
+window.deleteHealthRecord = deleteHealthRecord;
 
 function renderFitnessAndHabitsSection() {
   const todayIso = new Date().toISOString().split("T")[0];
@@ -9487,16 +10167,32 @@ function handleIdPdfSelect(input) {
   }
 }
 
-function viewVehiclePdf(id) {
+async function viewVehiclePdf(id) {
   if (!currentUser) return;
   const item = (state.importantIds || []).find(i => i.id === id && (!i.userId || i.userId === currentUser));
   if (!item) {
     showToast("Document record not found.");
     return;
   }
-  const pdfData = item.documentFile || item.fileData;
+  let pdfData = item.documentFile || item.fileData;
+  if (!pdfData || pdfData.startsWith("vault_file://")) {
+    const cached = await FileVault.getFile(item.id);
+    if (cached && cached.fileData) {
+      pdfData = cached.fileData;
+      item.documentFile = pdfData;
+      item.fileData = pdfData;
+    } else if (currentUser && window.Firebase && typeof window.Firebase.fetchVaultFile === "function") {
+      const cloudData = await window.Firebase.fetchVaultFile(currentUser, item.id);
+      if (cloudData) {
+        pdfData = cloudData;
+        item.documentFile = pdfData;
+        item.fileData = pdfData;
+        await FileVault.saveFile(item.id, cloudData, { fileName: item.fileName, fileType: "application/pdf" });
+      }
+    }
+  }
   if (!pdfData) {
-    showToast("No physical PDF file was attached to this record.");
+    showToast("No physical document or PDF file was attached to this record.");
     return;
   }
 
@@ -9694,13 +10390,33 @@ function saveImportantId() {
   };
 
   if (file) {
-    const reader = new FileReader();
-    reader.onload = e => {
-      newRecord.documentFile = e.target.result;
-      newRecord.fileData = e.target.result;
+    showToast("Processing document attachment...");
+    optimizeImageForVault(file).then(async (optResult) => {
+      const dataUrl = optResult.dataUrl;
+      newRecord.documentFile = dataUrl;
+      newRecord.fileData = dataUrl;
+
+      await FileVault.saveFile(newRecord.id, dataUrl, {
+        fileName: newRecord.fileName,
+        fileType: file.type || "application/octet-stream"
+      });
+
+      if (window.Firebase && typeof window.Firebase.uploadFileToCloud === "function") {
+        try {
+          const cloudRes = await window.Firebase.uploadFileToCloud(currentUser, dataUrl, {
+            id: newRecord.id,
+            fileName: newRecord.fileName,
+            fileType: file.type || "application/octet-stream"
+          });
+          if (cloudRes && cloudRes.success && cloudRes.url) {
+            newRecord.documentFile = cloudRes.url;
+            newRecord.fileData = cloudRes.url;
+          }
+        } catch (e) {}
+      }
+
       finishSave();
-    };
-    reader.readAsDataURL(file);
+    }).catch(() => finishSave());
   } else {
     finishSave();
   }
@@ -9708,11 +10424,21 @@ function saveImportantId() {
 
 function deleteImportantId(id) {
   if (!currentUser) return;
+  const item = (state.importantIds || []).find(i => i.id === id);
   state.importantIds = (state.importantIds || []).filter(i => (i.id !== id) || (i.userId && i.userId !== currentUser));
   saveSessionData();
   renderMain();
   showToast("Vehicle document deleted");
+
+  FileVault.deleteFile(id);
+  if (window.Firebase && typeof window.Firebase.deleteFileFromCloud === "function") {
+    window.Firebase.deleteFileFromCloud(currentUser, id, item ? (item.documentFile || item.fileData) : "");
+  }
 }
+window.viewVehiclePdf = viewVehiclePdf;
+window.saveImportantId = saveImportantId;
+window.deleteImportantId = deleteImportantId;
+window.toggleIdMask = toggleIdMask;
 
 /* ==========================================================================
    GLOBAL SEARCH & NOTIFICATION ALERT CENTER LOGIC
